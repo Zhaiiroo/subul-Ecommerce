@@ -3,6 +3,7 @@ export type AdminUserDto = {
   name: string;
   email: string;
   role: string;
+  mustChangePassword: boolean;
 };
 
 export type LoginResponse = {

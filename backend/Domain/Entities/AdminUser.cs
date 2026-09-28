@@ -17,6 +17,21 @@ public partial class AdminUser
 
     public bool IsActive { get; set; }
 
+    /// <summary>
+    /// Set on every account the panel or the bootstrapper creates, and again on
+    /// every admin-issued reset. While it is true the session may only reach the
+    /// change-password route.
+    /// </summary>
+    public bool MustChangePassword { get; set; }
+
+    /// <summary>
+    /// Doubles as the session stamp: <see cref="Common.Auth.JwtTokenService"/>
+    /// writes it into the token and <see cref="Common.Auth.AdminSessionValidator"/>
+    /// rejects tokens minted before the current value, so a reset logs the
+    /// account out of every device it was signed in on.
+    /// </summary>
+    public DateTime? PasswordChangedAt { get; set; }
+
     public DateTime? LastLoginAt { get; set; }
 
     public DateTime CreatedAt { get; set; }

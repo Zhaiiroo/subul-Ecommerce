@@ -8,26 +8,33 @@ import {
   KBarSearch,
 } from "kbar"
 import { useRouter } from "next/navigation"
+import { useSession } from "next-auth/react"
 import { useMemo } from "react"
 
 import RenderResults from "@/components/kbar/render-result"
-import { kbarNavItems, kbarQuickActions } from "@/config/navigation"
+import { canSeeNavItem, kbarNavItems, kbarQuickActions } from "@/config/navigation"
 import { messages } from "@/lib/messages.ar"
 
 export function KBar({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const { data: session } = useSession()
+  const role = session?.user?.role
 
   const actions = useMemo(
     () =>
-      [...kbarNavItems, ...kbarQuickActions].map((item) => ({
-        id: item.id,
-        name: item.name,
-        section: item.section,
-        subtitle: item.subtitle,
-        keywords: `${item.name} ${item.subtitle}`,
-        perform: () => router.push(item.url),
-      })),
-    [router]
+      [...kbarNavItems, ...kbarQuickActions]
+        // Same role filter the sidebar applies, so the palette cannot route
+        // someone to a screen the API will answer 403 for.
+        .filter((item) => canSeeNavItem(item, role))
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          section: item.section,
+          subtitle: item.subtitle,
+          keywords: `${item.name} ${item.subtitle}`,
+          perform: () => router.push(item.url),
+        })),
+    [router, role]
   )
 
   return (

@@ -128,11 +128,16 @@ Entity: `backend/Domain/Entities/AdminUser.cs`
 | `password_hash` | string | no |  |
 | `role` | string | no |  |
 | `is_active` | bool | no |  |
+| `must_change_password` | bool | no | default `false`; while true only `api/auth/me`, `api/auth/change-password` and `api/auth/logout` are reachable |
+| `password_changed_at` | DateTime | yes | session stamp — a token minted before this value is rejected |
 | `last_login_at` | DateTime | yes |  |
 | `created_at` | DateTime | no |  |
 | `updated_at` | DateTime | yes |  |
 
 **Relations:** `ActivityLogs`, `CashCollections`, `ContactMessages`, `FlashSales`, `InventoryMovements`, `OrderDeliveries`, `OrderStatusHistories`, `PurchaseOrders`, `Returns`, `WarrantyClaims`
+
+`must_change_password` and `password_changed_at` were added after the Initial migration —
+DDL in `docs/sql/2026-09-10-admin-user-password-policy.sql`, mapping in `AppDbContext.Partial.cs`.
 
 ---
 

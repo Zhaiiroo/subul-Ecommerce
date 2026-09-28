@@ -59,7 +59,7 @@ public class LoginAdminUserHandler(
 
         var response = new LoginAdminUserResponse(
             accessToken,
-            new AdminUserDto(user.Id, user.Name, user.Email, user.Role));
+            new AdminUserDto(user.Id, user.Name, user.Email, user.Role, user.MustChangePassword));
 
         return Result<LoginAdminUserResponse>.Success(response);
     }

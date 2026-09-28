@@ -9,6 +9,7 @@ import {
   ClipboardListIcon,
   TruckIcon,
   CreditCardIcon,
+  UsersRoundIcon,
 } from "lucide-react"
 import { messages } from "@/lib/messages.ar"
 
@@ -71,6 +72,15 @@ export const navMain = [
     icon: ShoppingBagIcon,
   },
   {
+    id: "adminUsers",
+    title: messages.nav.adminUsers,
+    url: "/admin-users",
+    icon: UsersRoundIcon,
+    // Superadmin-only, matching [Authorize(Roles = "superadmin")] on the API.
+    // AppSidebar and KBar both filter on this; the backend is the enforcement.
+    roles: ["superadmin"],
+  },
+  {
     id: "guide",
     title: messages.nav.guide,
     url: "/guide",
@@ -103,12 +113,27 @@ export const navDocuments = [
 
 // ─── KBar command-palette items (derived from navMain) ────────────────────────
 
+type NavMainItem = (typeof navMain)[number]
+
+/** `undefined` roles means every signed-in admin sees the entry. */
+export function canSeeNavItem(item: { readonly id: string }, role: string | undefined) {
+  // Read through a cast: most entries carry no `roles` key at all, and a
+  // parameter typed with only optional properties rejects those outright.
+  const roles = (item as { readonly roles?: readonly string[] }).roles
+  return roles === undefined || (role !== undefined && roles.includes(role))
+}
+
+export function visibleNavMain(role: string | undefined): readonly NavMainItem[] {
+  return navMain.filter((item) => canSeeNavItem(item, role))
+}
+
 export const kbarNavItems = navMain.map((item) => ({
   id: item.id,
   name: item.title,
   url: item.url,
   section: messages.kbar.sectionNav,
   subtitle: item.title,
+  roles: "roles" in item ? item.roles : undefined,
 }))
 
 export const kbarQuickActions = [

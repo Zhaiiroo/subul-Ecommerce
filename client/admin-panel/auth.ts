@@ -50,6 +50,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const json = await res.json();
         if (!json.success) return null;
 
+        // `user` carries mustChangePassword: the backend closes every route but
+        // change-password while it is set, and middleware.ts routes there.
         const { accessToken, user } = json.data;
         return { ...user, accessToken };
       },
@@ -64,6 +66,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.accessToken = (user as { accessToken: string }).accessToken;
         token.role = (user as { role: string }).role;
         token.id = (user as { id: number }).id;
+        token.mustChangePassword =
+          (user as { mustChangePassword?: boolean }).mustChangePassword ?? false;
       }
       return token;
     },
@@ -75,6 +79,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           id: token.id as number,
           role: token.role as string,
           accessToken: token.accessToken as string,
+          mustChangePassword: token.mustChangePassword === true,
         },
       };
     },

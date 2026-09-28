@@ -28,6 +28,8 @@ npm run lint
 
 Full stack via Docker: `docker compose up` (postgres 17 + api + admin + storefront). Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, `AUTH_SECRET` in a `.env`; the Next Dockerfiles fail the build unless `NEXT_PUBLIC_API_URL` is passed as a build arg. The storefront also reads `NEXT_PUBLIC_SITE_URL` (its own public origin) for canonical and Open Graph URLs — optional, defaulting to `http://localhost:3001`, but link previews break if it is wrong in production.
 
+Schema changes since the Initial migration are applied by hand from `docs/sql/`; run those scripts against an existing database before starting the API. They are idempotent.
+
 Local dev needs a Postgres matching the `DefaultConnection` in `backend/appsettings.json`, plus a `Jwt:Secret` of at least 32 chars in user-secrets or `appsettings.Development.json` — the app throws at startup otherwise. In Development, `DbSeeder` seeds data on boot.
 
 It also needs Redis. `RedisRateLimit:Enabled` defaults to true, and startup now **fails** if it is on without a `ConnectionStrings:Redis` — that combination used to boot and enforce nothing. If Redis is configured but unreachable, `POST api/auth/login` returns 429 (it fails closed, so an outage cannot be used to strip brute-force protection) while every other route still serves. To work without Redis, set `RedisRateLimit:Enabled` to `false` in `appsettings.Development.json` — an explicit opt-out rather than a silent one.
@@ -61,6 +63,14 @@ Every operation is a folder `Features/{Entity}Feature/{Verb}{Entity}/` holding e
 `Program.cs` sets an authorization **fallback policy**, so every endpoint requires a valid bearer token by default. Public routes must opt out with `[AllowAnonymous]` — currently login, storefront catalog reads (category/brand/collection/product list + get-by-id/slug), all of `api/carts/*`, order creation, and guest order tracking. When adding a storefront-facing read, add `[AllowAnonymous]` or the storefront breaks; when adding an admin write, leave it off.
 
 Admin login: `POST api/auth/login` → NextAuth Credentials provider (`client/admin-panel/auth.ts`) stores the backend `accessToken` in the JWT session; `lib/api-client.ts` attaches it as a bearer header (falling back to `auth()` during SSR), and `middleware.ts` redirects unauthenticated traffic to `/login`.
+
+A bearer token is not trusted on its own. `AdminSessionValidator` runs from `JwtBearerEvents.OnTokenValidated` and re-reads the `admin_users` row on every authenticated request, rejecting the token when the account is inactive or when its `password_changed_at` stamp no longer matches the `pwd_stamp` claim, and refreshing the role and must-change claims from the row. That is one primary-key read per authenticated request; anonymous storefront traffic sends no token and never pays for it. The practical consequence: deactivating an account or resetting its password ends its existing sessions immediately instead of eight hours later.
+
+`admin_users.must_change_password` closes the API to everything but `api/auth/me`, `api/auth/change-password` and `api/auth/logout` (`PasswordChangeRequiredMiddleware`, 403 with the message `Password change required`). It is set on every account the panel creates and on every admin-issued reset. `middleware.ts` redirects such a session to `/change-password`; `lib/api-client.ts` handles the 403 and 401 cases for calls already in flight.
+
+Admin-user management lives at `api/admin-users/*`, all of it `[Authorize(Roles = "superadmin")]`, plus self-service `POST api/auth/change-password` which every role may call. Roles are `superadmin` / `manager` / `staff` (`AdminUserRoles`); password rules and the temporary-password generator are in `AdminPasswordPolicy`, mirrored by the Zod schemas in `features/admin-user/schemas/` and `features/auth/schemas/change-password.schema.ts`. Generated passwords are returned once in the create and reset responses and never again. Handler guards refuse deactivating, deleting or demoting yourself or the last active superadmin, and refuse deleting an account that is referenced by existing records.
+
+First account: `AdminBootstrapper` runs at startup in every environment but creates an account only when `admin_users` is empty, so in Development the seeder wins and this is effectively the production path. Configure it with `AdminBootstrap:Enabled` / `Name` / `Email` / `Password`; leave the password unset and the API generates one and logs it once at Warning. It is disabled in `appsettings.Testing.json` so integration tests seed their own accounts.
 
 ### Frontend feature modules
 

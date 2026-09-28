@@ -21,6 +21,9 @@ var builder = WebApplication.CreateBuilder(args);
 var maxImageBytes = builder.Configuration
     .GetSection(ImageStorageOptions.SectionName)
     .GetValue<long>("MaxFileSizeBytes", 5_242_880);
+var imageStorageProvider = builder.Configuration
+    .GetSection(ImageStorageOptions.SectionName)
+    .GetValue<string>("Provider") ?? ImageStorageOptions.LocalProvider;
 var multipartLimit = maxImageBytes + ImageStorageOptions.MultipartOverheadBytes;
 
 // Kestrel's body limit is global. Sizing it for image uploads handed the same
@@ -64,6 +67,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidAudience = jwtOptions.Audience,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Secret)),
             ClockSkew = TimeSpan.Zero,
+        };
+
+        // A signed token alone cannot tell us that the account behind it was
+        // disabled or had its password reset five minutes ago. AdminSessionValidator
+        // reconciles both against the row before the request is authorized.
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = AdminSessionValidator.ValidateAsync,
         };
     });
 
@@ -130,6 +141,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     }
 });
 
+builder.Services.AddOptions<AdminBootstrapOptions>()
+    .Bind(builder.Configuration.GetSection(AdminBootstrapOptions.SectionName))
+    .Validate(
+        options => !options.Enabled || !string.IsNullOrWhiteSpace(options.Email),
+        "AdminBootstrap:Email must be set while AdminBootstrap:Enabled is true.")
+    .ValidateOnStart();
+
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -158,17 +176,22 @@ if (corsOrigins.Length > 0)
     app.UseCors();
 }
 
-var imgPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "img"));
-Directory.CreateDirectory(imgPath);
-app.UseStaticFiles(new StaticFileOptions
+if (imageStorageProvider.Equals(ImageStorageOptions.LocalProvider, StringComparison.OrdinalIgnoreCase))
 {
-    FileProvider = new PhysicalFileProvider(imgPath),
-    RequestPath = "/img"
-});
+    var imgPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "img"));
+    Directory.CreateDirectory(imgPath);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(imgPath),
+        RequestPath = "/img"
+    });
+}
 
 app.UseAuthentication();
 app.UseMiddleware<RedisRateLimitMiddleware>();
 app.UseAuthorization();
+// After authorization, so an anonymous caller still gets 401 rather than 403.
+app.UseMiddleware<PasswordChangeRequiredMiddleware>();
 app.UseOutputCache();
 
 app.MapControllers();
@@ -177,6 +200,11 @@ if (app.Environment.IsDevelopment())
 {
     await DbSeeder.SeedAsync(app.Services);
 }
+
+// Runs in every environment, but only on an empty admin_users table — in
+// Development the seeder above has already filled it, so this is the production
+// path that creates the single first account.
+await AdminBootstrapper.RunAsync(app.Services);
 
 app.Run();
 

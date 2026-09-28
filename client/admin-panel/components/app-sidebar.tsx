@@ -4,6 +4,7 @@ import * as React from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { useKBar } from "kbar"
+import { useSession } from "next-auth/react"
 
 import { NavMain } from "@/components/nav-main"
 import { NavSecondary, type NavSecondaryItem } from "@/components/nav-secondary"
@@ -17,13 +18,16 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { navMain, navSecondary } from "@/config/navigation"
+import { navSecondary, visibleNavMain } from "@/config/navigation"
 import { messages } from "@/lib/messages.ar"
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { query } = useKBar()
+  const { data: session } = useSession()
 
-  const mainItems = navMain.map((item) => ({
+  // Admin-user management is superadmin-only on the API; hide the entry rather
+  // than route people to a page that answers 403.
+  const mainItems = visibleNavMain(session?.user?.role).map((item) => ({
     title: item.title,
     url: item.url,
     icon: <item.icon />,

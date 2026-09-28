@@ -111,6 +111,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.*.example
 !.env.template
 *.pem
 *.key
@@ -150,6 +151,8 @@ coverage*.xml
 # ─────────────────────────────────────────────
 img/**
 !img/.gitkeep
+backups/
+.runtime/
 
 # ─────────────────────────────────────────────
 # Misc

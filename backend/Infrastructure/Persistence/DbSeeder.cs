@@ -215,11 +215,15 @@ public static class DbSeeder
         }
 
         var passwordHash = BCrypt.Net.BCrypt.HashPassword(SeedAdminPassword);
+        // MustChangePassword stays false here on purpose. These three exist so a
+        // developer can sign straight in with a password that is written down in
+        // this file; the forced-change flow belongs to accounts whose password is
+        // a secret, which is AdminBootstrapper's job and the panel's.
         var users = new[]
         {
-            new AdminUser { Name = "Ahmed Al-Subul", Email = "admin@subul.iq", PasswordHash = passwordHash, Role = "superadmin", IsActive = true, CreatedAt = Now },
-            new AdminUser { Name = "Sara Hassan", Email = "sara@subul.iq", PasswordHash = passwordHash, Role = "manager", IsActive = true, CreatedAt = Now },
-            new AdminUser { Name = "Ali Mohammed", Email = "ali@subul.iq", PasswordHash = passwordHash, Role = "staff", IsActive = true, CreatedAt = Now },
+            new AdminUser { Name = "Ahmed Al-Subul", Email = "admin@subul.iq", PasswordHash = passwordHash, Role = "superadmin", IsActive = true, PasswordChangedAt = Now, CreatedAt = Now },
+            new AdminUser { Name = "Sara Hassan", Email = "sara@subul.iq", PasswordHash = passwordHash, Role = "manager", IsActive = true, PasswordChangedAt = Now, CreatedAt = Now },
+            new AdminUser { Name = "Ali Mohammed", Email = "ali@subul.iq", PasswordHash = passwordHash, Role = "staff", IsActive = true, PasswordChangedAt = Now, CreatedAt = Now },
         };
         db.AdminUsers.AddRange(users);
         await db.SaveChangesAsync();
@@ -250,6 +254,8 @@ public static class DbSeeder
                 continue;
 
             user.PasswordHash = passwordHash;
+            user.PasswordChangedAt = Now;
+            user.MustChangePassword = false;
             user.UpdatedAt = Now;
             repaired++;
         }

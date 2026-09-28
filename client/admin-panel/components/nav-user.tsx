@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/sidebar"
 import { useSession, signOut } from "next-auth/react"
 import { messages } from "@/lib/messages.ar"
-import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, LogOutIcon } from "lucide-react"
+import Link from "next/link"
+import { EllipsisVerticalIcon, CircleUserRoundIcon, CreditCardIcon, BellIcon, KeyRoundIcon, LogOutIcon } from "lucide-react"
 
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean)
@@ -93,6 +94,12 @@ export function NavUser() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              <DropdownMenuItem asChild>
+                <Link href="/change-password">
+                  <KeyRoundIcon />
+                  {messages.nav.changePassword}
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem>
                 <CircleUserRoundIcon />
                 {messages.nav.account}

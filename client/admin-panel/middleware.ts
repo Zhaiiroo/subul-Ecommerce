@@ -14,6 +14,7 @@ export default auth((req) => {
   // match its own type.
   const isLoggedIn = req.auth?.user?.id != null;
   const isOnLogin = req.nextUrl.pathname === '/login';
+  const isOnChangePassword = req.nextUrl.pathname === '/change-password';
 
   if (isOnLogin && isLoggedIn) {
     return NextResponse.redirect(new URL('/dashboard', req.url));
@@ -23,6 +24,13 @@ export default auth((req) => {
     const loginUrl = new URL('/login', req.url);
     loginUrl.searchParams.set('from', req.nextUrl.pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // An account holding a temporary password has one destination. This mirrors
+  // the API, which answers 403 on every other route while the flag is set — the
+  // redirect is the courtesy, the backend is the enforcement.
+  if (isLoggedIn && req.auth?.user?.mustChangePassword && !isOnChangePassword) {
+    return NextResponse.redirect(new URL('/change-password', req.url));
   }
 
   return NextResponse.next();

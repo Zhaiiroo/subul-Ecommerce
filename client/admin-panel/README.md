@@ -177,5 +177,8 @@ Components are placed in `components/ui/`.
 | Variable | Description |
 |---|---|
 | `NEXT_PUBLIC_API_URL` | Base URL for the ASP.NET Core API (e.g. `http://localhost:5101/api`) |
+| `NEXT_PUBLIC_IMAGE_URL` | Optional public Cloudflare R2 custom domain used by production image optimization |
+| `INTERNAL_API_URL` | Server-only API address (`http://api:5101/api` inside Docker) |
+| `AUTH_SECRET` | Server-only Auth.js signing secret |
 
 Copy `.env.example` to `.env.local` to get started.

@@ -2,10 +2,19 @@ import type { NextConfig } from "next"
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5101/api"
 const apiOrigin = apiUrl.replace(/\/api\/?$/, "")
+const publicImageUrl = process.env.NEXT_PUBLIC_IMAGE_URL?.trim().replace(/\/$/, "")
 
 let imageHostname = "localhost"
 let imageProtocol: "http" | "https" = "http"
 let imagePort: string | undefined = "5101"
+let publicImagePattern:
+  | {
+      protocol: "http" | "https"
+      hostname: string
+      port?: string
+      pathname: string
+    }
+  | undefined
 
 try {
   const parsed = new URL(apiOrigin)
@@ -14,6 +23,23 @@ try {
   imagePort = parsed.port || undefined
 } catch {
   // keep localhost defaults
+}
+
+if (publicImageUrl) {
+  try {
+    const parsed = new URL(publicImageUrl)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("unsupported protocol")
+    }
+    publicImagePattern = {
+      protocol: parsed.protocol.slice(0, -1) as "http" | "https",
+      hostname: parsed.hostname,
+      ...(parsed.port ? { port: parsed.port } : {}),
+      pathname: "/**",
+    }
+  } catch {
+    throw new Error("NEXT_PUBLIC_IMAGE_URL must be an absolute http or https URL")
+  }
 }
 
 /**
@@ -36,7 +62,7 @@ function securityHeaders() {
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "img-src 'self' data: blob: " + apiOrigin,
+    "img-src 'self' data: blob: " + apiOrigin + (publicImageUrl ? " " + publicImageUrl : ""),
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'unsafe-inline'",
@@ -74,6 +100,7 @@ const nextConfig: NextConfig = {
         port: "5101",
         pathname: "/img/**",
       },
+      ...(publicImagePattern ? [publicImagePattern] : []),
     ],
   },
   async headers() {

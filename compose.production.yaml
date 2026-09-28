@@ -1,0 +1,44 @@
+services:
+  traefik:
+    ports:
+      - "80:80"
+      - "443:443"
+      - "3000:3000"
+
+  db:
+    volumes:
+      - ${DATABASE_BACKUP_PATH:-/srv/subul/backups/database}:/backups
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
+      Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
+      ImageStorage__Provider: R2
+      ImageStorage__R2__ServiceUrl: ${R2_SERVICE_URL:?R2_SERVICE_URL is required}
+      ImageStorage__R2__BucketName: ${R2_BUCKET_NAME:?R2_BUCKET_NAME is required}
+      ImageStorage__R2__AccessKeyId: ${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}
+      ImageStorage__R2__SecretAccessKey: ${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}
+      ImageStorage__R2__PublicBaseUrl: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+
+  admin:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+
+  storefront:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
+        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+        INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
+      NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
+      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+

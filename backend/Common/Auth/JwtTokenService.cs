@@ -22,6 +22,13 @@ public class JwtTokenService(IOptions<JwtOptions> options)
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Name, user.Name),
             new Claim(ClaimTypes.Role, user.Role),
+            // Re-checked against the database on every request. A password change
+            // or admin reset moves the stamp, which retires every token already
+            // in the wild for this account.
+            new Claim(AdminSessionClaims.PasswordStamp, AdminPasswordPolicy.StampFor(user)),
+            new Claim(
+                AdminSessionClaims.MustChangePassword,
+                user.MustChangePassword ? "true" : "false"),
         };
 
         var token = new JwtSecurityToken(

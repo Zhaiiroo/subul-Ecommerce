@@ -1,0 +1,114 @@
+services:
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    volumes:
+      - ./deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./deploy/traefik/dynamic:/etc/traefik/dynamic:ro
+      - letsencrypt:/letsencrypt
+    depends_on:
+      - api
+      - admin
+      - storefront
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8.10.1-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: subul-backend:${IMAGE_TAG:-local}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:-Staging}
+      ConnectionStrings__DefaultConnection: >-
+        Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
+      ConnectionStrings__Redis: redis:6379,abortConnect=false
+      Cors__AllowedOrigins__0: ${ADMIN_ORIGIN:-http://localhost:3100}
+      Cors__AllowedOrigins__1: ${STOREFRONT_ORIGIN:-http://localhost:8080}
+      ForwardedHeaders__TrustedNetworks__0: ${TRUSTED_PROXY_NETWORK:-172.16.0.0/12}
+      Jwt__Secret: ${JWT_SECRET:-}
+      Jwt__Issuer: ${JWT_ISSUER:-subul-admin}
+      Jwt__Audience: ${JWT_AUDIENCE:-subul-admin-panel}
+      Jwt__AccessTokenMinutes: ${JWT_ACCESS_TOKEN_MINUTES:-480}
+      AdminBootstrap__Enabled: ${ADMIN_BOOTSTRAP_ENABLED:-true}
+      AdminBootstrap__Name: ${ADMIN_BOOTSTRAP_NAME:-Administrator}
+      AdminBootstrap__Email: ${ADMIN_BOOTSTRAP_EMAIL:-admin@subul.iq}
+      AdminBootstrap__Password: ${ADMIN_BOOTSTRAP_PASSWORD:-}
+
+  admin:
+    image: subul-admin:${IMAGE_TAG:-local}
+    build:
+      context: ./client/admin-panel
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:5101/api}
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      AUTH_TRUST_HOST: "true"
+
+  storefront:
+    image: subul-storefront:${IMAGE_TAG:-local}
+    build:
+      context: ./client/storefront
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
+        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
+        INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+      NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
+      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
+      INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
+
+volumes:
+  postgres-data:
+    external: true
+    name: ${POSTGRES_VOLUME_NAME:?POSTGRES_VOLUME_NAME is required}
+  letsencrypt:
+

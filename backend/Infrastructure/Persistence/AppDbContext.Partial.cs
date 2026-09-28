@@ -79,5 +79,18 @@ public partial class AppDbContext
         modelBuilder.Entity<AdminUser>()
             .Property(e => e.Id)
             .ValueGeneratedOnAdd();
+
+        // Added after the scaffold, so the mapping lives here rather than in the
+        // generated AppDbContext.cs. The matching DDL is in
+        // docs/sql/2026-09-10-admin-user-password-policy.sql.
+        modelBuilder.Entity<AdminUser>()
+            .Property(e => e.MustChangePassword)
+            .HasDefaultValue(false)
+            .HasColumnName("must_change_password");
+
+        modelBuilder.Entity<AdminUser>()
+            .Property(e => e.PasswordChangedAt)
+            .HasColumnType("timestamp without time zone")
+            .HasColumnName("password_changed_at");
     }
 }

@@ -21,8 +21,19 @@ RTL Arabic customer-facing storefront for Subul Ecommerce. Built with Next.js 16
 ```bash
 cp .env.example .env.local
 npm install
-npm run dev    # http://localhost:3000
+npm run dev -- --port 3001    # http://localhost:3001
 ```
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | Browser-facing ASP.NET Core API URL |
+| `NEXT_PUBLIC_SITE_URL` | Canonical public storefront URL |
+| `NEXT_PUBLIC_IMAGE_URL` | Optional public Cloudflare R2 custom domain used in production |
+| `INTERNAL_API_ORIGIN` | Server-only API origin (`http://api:5101` inside Docker) |
+
+Copy `.env.example` to `.env.local` for native Development.
 
 ## Routes
 

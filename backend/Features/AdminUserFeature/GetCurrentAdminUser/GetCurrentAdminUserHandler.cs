@@ -21,7 +21,7 @@ public class GetCurrentAdminUserHandler(AppDbContext context)
             return Result<GetCurrentAdminUserResponse>.Failure("Admin user not found");
 
         var response = new GetCurrentAdminUserResponse(
-            new AdminUserDto(user.Id, user.Name, user.Email, user.Role));
+            new AdminUserDto(user.Id, user.Name, user.Email, user.Role, user.MustChangePassword));
 
         return Result<GetCurrentAdminUserResponse>.Success(response);
     }

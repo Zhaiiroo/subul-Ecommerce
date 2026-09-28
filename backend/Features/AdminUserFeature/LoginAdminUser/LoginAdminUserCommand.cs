@@ -15,4 +15,5 @@ public record AdminUserDto(
     long Id,
     string Name,
     string Email,
-    string Role);
+    string Role,
+    bool MustChangePassword);

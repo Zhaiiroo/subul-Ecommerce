@@ -19,7 +19,10 @@ public static class AuthTestHelper
 
     public static async Task SeedAdminUserAsync(AppDbContext context)
     {
-        if (await context.AdminUsers.AnyAsync())
+        // Keyed on the default account rather than "any admin user": the
+        // admin-user management tests create accounts of their own, and an
+        // Any() check would then decide this one already exists and skip it.
+        if (await context.AdminUsers.AnyAsync(u => u.Email == DefaultAdminEmail))
             return;
 
         var passwordHash = BCrypt.Net.BCrypt.HashPassword(DefaultAdminPassword);
@@ -30,6 +33,7 @@ public static class AuthTestHelper
             PasswordHash = passwordHash,
             Role = "superadmin",
             IsActive = true,
+            PasswordChangedAt = DateTime.Now,
             CreatedAt = DateTime.Now,
         });
         await context.SaveChangesAsync();
