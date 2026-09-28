@@ -3,6 +3,8 @@ using backend.Common.Behaviors;
 using backend.Common.RateLimiting;
 using backend.Common.Storage;
 using backend.Infrastructure.Persistence;
+using Amazon.Runtime;
+using Amazon.S3;
 using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -79,11 +81,56 @@ public static class ServiceCollectionExtensions
             }
         });
 
-        services.Configure<ImageStorageOptions>(configuration.GetSection(ImageStorageOptions.SectionName));
+        var imageStorageSection = configuration.GetSection(ImageStorageOptions.SectionName);
+        var imageStorageOptions = imageStorageSection.Get<ImageStorageOptions>() ?? new ImageStorageOptions();
+
+        services.AddOptions<ImageStorageOptions>()
+            .Bind(imageStorageSection)
+            .Validate(
+                options => options.UsesLocalStorage || options.UsesR2Storage,
+                "ImageStorage:Provider must be either 'Local' or 'R2'.")
+            .Validate(
+                options => options.MaxFileSizeBytes > 0,
+                "ImageStorage:MaxFileSizeBytes must be greater than zero.")
+            .Validate(
+                options => options.AllowedExtensions.Length > 0,
+                "ImageStorage:AllowedExtensions must contain at least one extension.")
+            .Validate(
+                options => !options.UsesR2Storage || HasValidR2Configuration(options.R2),
+                "R2 image storage requires valid ServiceUrl, BucketName, AccessKeyId, SecretAccessKey, and PublicBaseUrl values.")
+            .ValidateOnStart();
+
+        if (imageStorageOptions.UsesR2Storage)
+        {
+            services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client(
+                new BasicAWSCredentials(
+                    imageStorageOptions.R2.AccessKeyId,
+                    imageStorageOptions.R2.SecretAccessKey),
+                new AmazonS3Config
+                {
+                    ServiceURL = imageStorageOptions.R2.ServiceUrl,
+                    AuthenticationRegion = "auto",
+                    ForcePathStyle = true,
+                }));
+            services.AddSingleton<IImageStorageService, R2ImageStorageService>();
+        }
+        else
+        {
+            services.AddSingleton<IImageStorageService, LocalImageStorageService>();
+        }
+
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.AddSingleton<JwtTokenService>();
-        services.AddSingleton<IImageStorageService, LocalImageStorageService>();
 
         return services;
     }
+
+    private static bool HasValidR2Configuration(R2ImageStorageOptions options) =>
+        Uri.TryCreate(options.ServiceUrl, UriKind.Absolute, out var serviceUri) &&
+        serviceUri.Scheme == Uri.UriSchemeHttps &&
+        Uri.TryCreate(options.PublicBaseUrl, UriKind.Absolute, out var publicUri) &&
+        publicUri.Scheme == Uri.UriSchemeHttps &&
+        !string.IsNullOrWhiteSpace(options.BucketName) &&
+        !string.IsNullOrWhiteSpace(options.AccessKeyId) &&
+        !string.IsNullOrWhiteSpace(options.SecretAccessKey);
 }

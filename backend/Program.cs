@@ -21,6 +21,9 @@ var builder = WebApplication.CreateBuilder(args);
 var maxImageBytes = builder.Configuration
     .GetSection(ImageStorageOptions.SectionName)
     .GetValue<long>("MaxFileSizeBytes", 5_242_880);
+var imageStorageProvider = builder.Configuration
+    .GetSection(ImageStorageOptions.SectionName)
+    .GetValue<string>("Provider") ?? ImageStorageOptions.LocalProvider;
 var multipartLimit = maxImageBytes + ImageStorageOptions.MultipartOverheadBytes;
 
 // Kestrel's body limit is global. Sizing it for image uploads handed the same
@@ -173,13 +176,16 @@ if (corsOrigins.Length > 0)
     app.UseCors();
 }
 
-var imgPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "img"));
-Directory.CreateDirectory(imgPath);
-app.UseStaticFiles(new StaticFileOptions
+if (imageStorageProvider.Equals(ImageStorageOptions.LocalProvider, StringComparison.OrdinalIgnoreCase))
 {
-    FileProvider = new PhysicalFileProvider(imgPath),
-    RequestPath = "/img"
-});
+    var imgPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "img"));
+    Directory.CreateDirectory(imgPath);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(imgPath),
+        RequestPath = "/img"
+    });
+}
 
 app.UseAuthentication();
 app.UseMiddleware<RedisRateLimitMiddleware>();
