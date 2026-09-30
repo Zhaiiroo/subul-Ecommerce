@@ -137,7 +137,7 @@ Entity: `backend/Domain/Entities/AdminUser.cs`
 **Relations:** `ActivityLogs`, `CashCollections`, `ContactMessages`, `FlashSales`, `InventoryMovements`, `OrderDeliveries`, `OrderStatusHistories`, `PurchaseOrders`, `Returns`, `WarrantyClaims`
 
 `must_change_password` and `password_changed_at` were added after the Initial migration —
-DDL in `docs/sql/2026-09-10-admin-user-password-policy.sql`, mapping in `AppDbContext.Partial.cs`.
+DDL in the `AdminUserPasswordPolicy` migration, mapping in `AppDbContext.Partial.cs`.
 
 ---
 

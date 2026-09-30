@@ -28,7 +28,7 @@ npm run lint
 
 Full stack via Docker: `docker compose up` (postgres 17 + api + admin + storefront). Requires `POSTGRES_PASSWORD`, `JWT_SECRET`, `AUTH_SECRET` in a `.env`; the Next Dockerfiles fail the build unless `NEXT_PUBLIC_API_URL` is passed as a build arg. The storefront also reads `NEXT_PUBLIC_SITE_URL` (its own public origin) for canonical and Open Graph URLs — optional, defaulting to `http://localhost:3001`, but link previews break if it is wrong in production.
 
-Schema changes since the Initial migration are applied by hand from `docs/sql/`; run those scripts against an existing database before starting the API. They are idempotent.
+The schema comes only from EF migrations, and normal startup never applies them. Run `dotnet run --project backend -- --migrate` after pulling a new migration (it applies pending ones and exits). In Docker the one-shot `migrate` service does the same, and `api` waits for it to succeed. `dotnet ef` is a local tool: run `dotnet tool restore` once. A new schema change is `dotnet ef migrations add <Name> --project backend`; `MigrationTests.Model_HasNoChangesMissingFromMigrations` fails when one is forgotten.
 
 Local dev needs a Postgres matching the `DefaultConnection` in `backend/appsettings.json`, plus a `Jwt:Secret` of at least 32 chars in user-secrets or `appsettings.Development.json` — the app throws at startup otherwise. In Development, `DbSeeder` seeds data on boot.
 
@@ -55,7 +55,7 @@ Every operation is a folder `Features/{Entity}Feature/{Verb}{Entity}/` holding e
 - Business rules (uniqueness, FK existence, slug generation, delete guards) live in the handler. `FluentValidation` validators are optional shape-only checks; `ValidationBehavior` turns them into 400s with `errors[]`. `LoggingBehavior` exists but is **not** registered.
 - Timestamps use `DateTime.Now` with `AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true)` set in both `Program.cs` and `DatabaseFixture` — never `DateTime.UtcNow`.
 - `Domain/Entities/Attribute.cs` collides with `System.Attribute` and is aliased as `AttributeEntity`.
-- Schema changes go in `AppDbContext.Partial.cs` (`OnModelCreatingPartial`) plus SQL and `DATABASE.md`. `AppDbContext.cs` is 2,300 lines of scaffolded output — don't read or edit it wholesale, and there is only the one Initial migration.
+- Schema changes go in `AppDbContext.Partial.cs` (`OnModelCreatingPartial`), then a migration and `DATABASE.md`. `AppDbContext.cs` is 2,300 lines of scaffolded output — don't read or edit it wholesale. A migration that may meet a database already carrying the change by hand must be idempotent SQL (`AdminUserPasswordPolicy` is the example); `DatabaseFixture` runs `MigrateAsync`, so the whole suite tests the migrated schema.
 - `Program.cs` serves uploaded images from the repo-root `img/` directory at `/img`; `LocalImageStorageService` writes there with magic-byte validation (`ImageFileSignatures`).
 
 ### Auth model

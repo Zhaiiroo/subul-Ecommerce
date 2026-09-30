@@ -66,10 +66,12 @@ Start only PostgreSQL and Redis:
 docker compose --env-file .env.development -f compose.yaml -f compose.local.yaml -p subul-dev up -d --wait db redis
 ```
 
-Run the backend from another terminal:
+Apply pending migrations (needed on a new volume and after pulling a new
+migration), then run the backend from another terminal:
 
 ```powershell
 Set-Location backend
+dotnet run -- --migrate
 dotnet run
 ```
 
@@ -118,8 +120,36 @@ Staging URLs with the example ports:
 - Redis: `127.0.0.1:6380`
 
 Staging runs with `ASPNETCORE_ENVIRONMENT=Staging`; it does not run the
-Development database seeder. An empty Staging database must be restored from a
-reviewed dump before starting the application services.
+Development database seeder. The `migrate` service creates the schema on an
+empty volume, so the stack starts without a dump, but with no catalog data;
+restore a reviewed dump first if Staging needs data.
+
+## Migrations
+
+The schema comes only from EF Core migrations in `backend/Migrations/`. Normal
+API startup never changes it. Every stack start runs the one-shot `migrate`
+service first (the api image with `--migrate`), and `api` starts only after it
+exits successfully. A failed migration therefore stops the deployment at that
+step instead of starting the API against a half-upgraded schema. See what it did:
+
+```bash
+docker compose ... logs migrate
+```
+
+Take a verified backup before any deployment that brings a new migration.
+Migrations should stay backward compatible (add columns before code depends on
+them, drop them one release later), so an application rollback does not also
+need a schema rollback.
+
+Creating a migration (the `dotnet-ef` local tool; run `dotnet tool restore` once):
+
+```powershell
+dotnet ef migrations add <Name> --project backend
+```
+
+`docs/sql/` is retired. Its only script is now the idempotent
+`AdminUserPasswordPolicy` migration, which is safe on databases where the script
+was already applied by hand.
 
 ## Manual database backup
 
@@ -210,6 +240,8 @@ docker volume create --label com.subul.type=database --label com.subul.environme
 docker compose --env-file /etc/subul/production.env -f compose.yaml -f compose.production.yaml -p subul-prod up --build -d --wait
 ```
 
+`up` runs `migrate` before `api`, so a new production volume gets its schema
+without any manual step; `AdminBootstrapper` then creates the first account.
 PostgreSQL and Redis are not published by `compose.production.yaml`. Production
 R2 configuration is validated at application startup; missing or invalid URLs,
 bucket, or credentials prevent the API from starting.

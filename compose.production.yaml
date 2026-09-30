@@ -9,6 +9,11 @@ services:
     volumes:
       - ${DATABASE_BACKUP_PATH:-/srv/subul/backups/database}:/backups
 
+  migrate:
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
+      Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
+
   api:
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}

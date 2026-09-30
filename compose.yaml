@@ -41,6 +41,27 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot schema step: applies pending EF migrations with the api image, then
+  # exits. `api` waits for it to succeed, so a failed migration stops the deploy
+  # here instead of starting an API against a half-upgraded schema. It needs the
+  # database and the JWT secret (Program.cs checks that before anything else) —
+  # nothing else, since every other option is validated only on app.Run().
+  migrate:
+    image: subul-backend:${IMAGE_TAG:-local}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: "no"
+    command: ["--migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:-Staging}
+      ConnectionStrings__DefaultConnection: >-
+        Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
+      Jwt__Secret: ${JWT_SECRET:-}
+
   api:
     image: subul-backend:${IMAGE_TAG:-local}
     build:
@@ -48,6 +69,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:

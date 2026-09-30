@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -152,6 +153,26 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+
+// Schema changes are an explicit one-shot deployment phase: the `migrate`
+// service in compose.yaml runs this and exits, and `api` starts only after it
+// succeeds. Normal startup never mutates the schema, so a bad migration fails a
+// deploy step instead of crash-looping the API.
+if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+    var pending = (await db.Database.GetPendingMigrationsAsync()).ToList();
+    await db.Database.MigrateAsync();
+
+    // Console rather than ILogger: Production logs at Warning, and this line is
+    // the one thing an operator reads from `docker compose logs migrate`.
+    Console.WriteLine(pending.Count == 0
+        ? "Database schema is up to date."
+        : $"Applied {pending.Count} migration(s): {string.Join(", ", pending)}");
+    return;
+}
 
 // First in the pipeline: everything downstream — rate limiting, HTTPS
 // redirection, logging — should see the caller's address and scheme, not the

@@ -36,7 +36,7 @@ docs/ai/                      task-template.md, feature-workflow.md
 | Read/guess entity fields | Read `Domain/Entities/{Entity}.cs` first |
 | Build frontend before backend API | API-first |
 | Repository/service layer | Handler → `AppDbContext` direct |
-| Edit `AppDbContext.cs` / EF migrations | `AppDbContext.Partial.cs` + SQL + `DATABASE.md` |
+| Edit `AppDbContext.cs` / hand-applied SQL scripts | `AppDbContext.Partial.cs` + `dotnet ef migrations add` + `DATABASE.md` |
 | `Result.Failure` typed `Error` record / throw business errors | `Result.Failure("… not found")` string |
 | Wrong failure phrases | `"not found"`→404, `"already exists"`→409 |
 | `DateTime.UtcNow` | `DateTime.Now` + Npgsql legacy timestamp switch |
