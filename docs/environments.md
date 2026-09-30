@@ -229,6 +229,10 @@ Any other host, including the bare server IP, matches nothing and gets a 404.
 The admin panel reaches the API under `/backend` because it serves Auth.js on
 `/api/auth/*` itself.
 
+The admin container sets `AUTH_URL` to the panel's public origin, derived from
+`ADMIN_HOST`. Auth.js otherwise builds its URLs from the address the Next server
+listens on (`http://0.0.0.0:3000`), and every sign-out redirected there.
+
 Both frontends call the API on their own origin, with relative
 `NEXT_PUBLIC_API_URL` values (`/api`, `/backend/api`) fixed in `compose.yaml`.
 Nothing is cross-origin, so CORS is off outside local development. The API

@@ -1,3 +1,4 @@
+using backend.Common.Carts;
 using backend.Common.Results;
 using backend.Domain.Entities;
 using backend.Features.CartFeature.GetCart;
@@ -17,7 +18,13 @@ public class AddCartItemHandler(AppDbContext context)
         if (command.Quantity < 1)
             return Result<AddCartItemResponse>.Failure("Quantity must be at least 1");
 
-        var sessionId = ResolveOrCreateSession(command.SessionId);
+        // No session yet means a first add-to-cart: mint one. A session that is
+        // present but malformed was not issued by this server.
+        string sessionId;
+        if (string.IsNullOrWhiteSpace(command.SessionId))
+            sessionId = CartSessionId.New();
+        else if (!CartSessionId.TryNormalize(command.SessionId, out sessionId))
+            return Result<AddCartItemResponse>.Failure(CartSessionId.InvalidMessage);
 
         var product = await context.Products
             .AsNoTracking()
@@ -89,14 +96,12 @@ public class AddCartItemHandler(AppDbContext context)
         }
 
         cart.UpdatedAt = now;
+        cart.ExpiresAt = now.Add(GetCartHandler.Lifetime);
         await context.SaveChangesAsync(cancellationToken);
 
         var cartResponse = await MapCartResponseAsync(context, cart, cancellationToken);
         return Result<AddCartItemResponse>.Success(new AddCartItemResponse(cartResponse, sessionId));
     }
-
-    private static string ResolveOrCreateSession(string? sessionId) =>
-        string.IsNullOrWhiteSpace(sessionId) ? Guid.NewGuid().ToString("N") : sessionId.Trim();
 
     private static async Task<CartResponse> MapCartResponseAsync(
         AppDbContext context,

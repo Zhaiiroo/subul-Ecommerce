@@ -42,3 +42,7 @@ services:
   admin:
     environment:
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+      # Auth.js builds its own URLs from the address the Next server listens on
+      # (http://0.0.0.0:3000 in the container), so without this every signOut()
+      # sent the user to a dead address. The panel's public origin fixes it.
+      AUTH_URL: https://${ADMIN_HOST}

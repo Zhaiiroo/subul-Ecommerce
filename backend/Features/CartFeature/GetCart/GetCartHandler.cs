@@ -1,3 +1,4 @@
+using backend.Common.Carts;
 using backend.Common.Results;
 using backend.Domain.Entities;
 using backend.Infrastructure.Persistence;
@@ -13,17 +14,35 @@ public class GetCartHandler(AppDbContext context)
         GetCartQuery query,
         CancellationToken cancellationToken)
     {
-        var sessionId = NormalizeSession(query.SessionId);
-        if (sessionId is null)
+        if (string.IsNullOrWhiteSpace(query.SessionId))
             return Result<CartResponse>.Failure("Cart session is required");
 
-        var cart = await GetOrCreateCartAsync(context, sessionId, cancellationToken);
+        if (!CartSessionId.TryNormalize(query.SessionId, out var sessionId))
+            return Result<CartResponse>.Failure(CartSessionId.InvalidMessage);
+
+        // A read never creates a row. It used to, which let an anonymous caller
+        // mint a cart per request with nothing but a made-up header; the cart now
+        // comes into existence on the first add-to-cart, and until then this is
+        // the same empty cart the storefront would have shown anyway.
+        var cart = await context.Carts
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.SessionId == sessionId, cancellationToken);
+
+        if (cart is null)
+            return Result<CartResponse>.Success(EmptyCart(sessionId));
+
         var response = await MapCartResponseAsync(context, cart, cancellationToken);
         return Result<CartResponse>.Success(response);
     }
 
-    private static string? NormalizeSession(string? sessionId) =>
-        string.IsNullOrWhiteSpace(sessionId) ? null : sessionId.Trim();
+    /// <summary>
+    /// How long a guest cart lives after its last change. Every write moves the
+    /// expiry forward, and <c>ExpiredCartCleanupService</c> deletes carts past it.
+    /// </summary>
+    internal static readonly TimeSpan Lifetime = TimeSpan.FromDays(30);
+
+    private static CartResponse EmptyCart(string sessionId) =>
+        new(0, sessionId, null, null, null, [], 0, 0);
 
     /// <summary>
     /// Carts are keyed by session only. Never resolve a cart from a caller-supplied
@@ -46,7 +65,7 @@ public class GetCartHandler(AppDbContext context)
         cart = new Cart
         {
             SessionId = sessionId,
-            ExpiresAt = now.AddDays(30),
+            ExpiresAt = now.Add(Lifetime),
             CreatedAt = now,
             UpdatedAt = now
         };

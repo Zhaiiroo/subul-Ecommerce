@@ -17,7 +17,20 @@ public sealed class RedisRateLimitOptions
     public int WindowSeconds { get; init; } = 60;
     public int LoginPermitLimit { get; init; } = 10;
     public int LoginWindowSeconds { get; init; } = 300;
+
+    // Guest order tracking takes an order number and a phone, which together are
+    // the whole credential for another person's order: name, address, contents.
+    // It gets its own budget, far below the general one, so it cannot be used to
+    // enumerate. A real shopper checks an order a handful of times.
+    public int TrackPermitLimit { get; init; } = 10;
+    public int TrackWindowSeconds { get; init; } = 300;
 }
+
+/// <summary>
+/// One rate-limit policy. <see cref="FailClosed"/> policies refuse requests
+/// when the limiter cannot reach a verdict, instead of serving them unlimited.
+/// </summary>
+internal sealed record RateLimitPolicy(string Name, int PermitLimit, int WindowSeconds, bool FailClosed);
 
 public sealed class RedisRateLimiter(IConnectionMultiplexer connectionMultiplexer)
 {
@@ -82,8 +95,7 @@ public sealed class RedisRateLimitMiddleware(
             return;
         }
 
-        var isLoginRequest = HttpMethods.IsPost(context.Request.Method) &&
-            string.Equals(context.Request.Path.Value, "/api/auth/login", StringComparison.OrdinalIgnoreCase);
+        var policy = ResolvePolicy(context.Request, options.Value);
 
         var rateLimiter = context.RequestServices.GetService<RedisRateLimiter>();
         if (rateLimiter is null)
@@ -91,33 +103,27 @@ public sealed class RedisRateLimitMiddleware(
             // Startup validation makes this unreachable while Enabled is true.
             // Kept as defence in depth, and routed through the same decision as
             // a runtime outage so both paths cannot drift apart.
-            await HandleLimiterUnavailableAsync(context, isLoginRequest, "the limiter is not registered");
+            await HandleLimiterUnavailableAsync(context, policy, "the limiter is not registered");
             return;
         }
 
-        var permitLimit = isLoginRequest
-            ? options.Value.LoginPermitLimit
-            : options.Value.PermitLimit;
-        var windowSeconds = isLoginRequest
-            ? options.Value.LoginWindowSeconds
-            : options.Value.WindowSeconds;
-        var policy = isLoginRequest ? "login" : "api";
+        var permitLimit = policy.PermitLimit;
         var clientIdentifier = GetClientIdentifier(context);
 
         RedisRateLimitDecision decision;
         try
         {
             decision = await rateLimiter.CheckAsync(
-                policy,
+                policy.Name,
                 clientIdentifier,
                 permitLimit,
-                TimeSpan.FromSeconds(windowSeconds),
+                TimeSpan.FromSeconds(policy.WindowSeconds),
                 context.RequestAborted);
         }
         catch (Exception exception) when (exception is RedisException or TimeoutException)
         {
             logger.LogWarning(exception, "Redis rate limiter is unavailable");
-            await HandleLimiterUnavailableAsync(context, isLoginRequest, "Redis is unavailable");
+            await HandleLimiterUnavailableAsync(context, policy, "Redis is unavailable");
             return;
         }
 
@@ -147,21 +153,39 @@ public sealed class RedisRateLimitMiddleware(
     }
 
     /// <summary>
+    /// Login and guest tracking — the two anonymous routes that take a guessable
+    /// credential — each get their own policy and fail closed. Everything else
+    /// shares the general budget.
+    /// </summary>
+    private static RateLimitPolicy ResolvePolicy(HttpRequest request, RedisRateLimitOptions options)
+    {
+        if (HttpMethods.IsPost(request.Method) &&
+            string.Equals(request.Path.Value, "/api/auth/login", StringComparison.OrdinalIgnoreCase))
+            return new RateLimitPolicy("login", options.LoginPermitLimit, options.LoginWindowSeconds, FailClosed: true);
+
+        if (HttpMethods.IsGet(request.Method) &&
+            string.Equals(request.Path.Value, "/api/orders/track", StringComparison.OrdinalIgnoreCase))
+            return new RateLimitPolicy("track", options.TrackPermitLimit, options.TrackWindowSeconds, FailClosed: true);
+
+        return new RateLimitPolicy("api", options.PermitLimit, options.WindowSeconds, FailClosed: false);
+    }
+
+    /// <summary>
     /// Decides what to do when the limiter cannot reach a verdict.
     ///
-    /// Login fails closed, everything else fails open. The asymmetry is
-    /// deliberate: knocking Redis over is exactly how an attacker would strip
-    /// the brute-force protection off /api/auth/login before running a password
-    /// list, so that route must not degrade into "unlimited". The catalog and
-    /// cart routes carry no such leverage, and taking the storefront down with
-    /// Redis would turn a cache outage into a full outage.
+    /// Login and tracking fail closed, everything else fails open. The asymmetry
+    /// is deliberate: knocking Redis over is exactly how an attacker would strip
+    /// the brute-force protection off those routes before running a password or
+    /// order-number list, so they must not degrade into "unlimited". The catalog
+    /// and cart routes carry no such leverage, and taking the storefront down
+    /// with Redis would turn a cache outage into a full outage.
     /// </summary>
     private async Task HandleLimiterUnavailableAsync(
         HttpContext context,
-        bool isLoginRequest,
+        RateLimitPolicy policy,
         string reason)
     {
-        if (!isLoginRequest)
+        if (!policy.FailClosed)
         {
             logger.LogWarning(
                 "Rate limiting is not being enforced ({Reason}); allowing {Method} {Path}",
@@ -174,11 +198,12 @@ public sealed class RedisRateLimitMiddleware(
         }
 
         logger.LogError(
-            "Rate limiting is not being enforced ({Reason}); rejecting the login attempt rather than " +
+            "Rate limiting is not being enforced ({Reason}); rejecting the {Policy} request rather than " +
             "serving it unprotected",
-            reason);
+            reason,
+            policy.Name);
 
-        var retryAfterSeconds = Math.Max(1, options.Value.LoginWindowSeconds);
+        var retryAfterSeconds = Math.Max(1, policy.WindowSeconds);
         context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
         context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
 

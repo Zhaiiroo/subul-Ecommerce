@@ -26,6 +26,9 @@ services:
 
   admin:
     pull_policy: build
+    environment:
+      # See compose.production.yaml. Locally the public origin carries the port.
+      AUTH_URL: http://${ADMIN_HOST}:${STOREFRONT_HOST_PORT:-8080}
 
   storefront:
     pull_policy: build

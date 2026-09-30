@@ -1,3 +1,4 @@
+using backend.Common.Carts;
 using backend.Common.Results;
 using backend.Domain.Entities;
 using backend.Features.CartFeature.GetCart;
@@ -17,9 +18,11 @@ public class UpdateCartItemHandler(AppDbContext context)
         if (command.Quantity < 1)
             return Result<CartResponse>.Failure("Quantity must be at least 1");
 
-        var sessionId = NormalizeSession(command.SessionId);
-        if (sessionId is null)
+        if (string.IsNullOrWhiteSpace(command.SessionId))
             return Result<CartResponse>.Failure("Cart session is required");
+
+        if (!CartSessionId.TryNormalize(command.SessionId, out var sessionId))
+            return Result<CartResponse>.Failure(CartSessionId.InvalidMessage);
 
         var cartItem = await context.CartItems
             .Include(ci => ci.Cart)
@@ -47,6 +50,7 @@ public class UpdateCartItemHandler(AppDbContext context)
         cartItem.UnitPrice = cartItem.Variant?.Price ?? cartItem.Product.Price;
         cartItem.UpdatedAt = now;
         cartItem.Cart.UpdatedAt = now;
+        cartItem.Cart.ExpiresAt = now.Add(GetCartHandler.Lifetime);
 
         await context.SaveChangesAsync(cancellationToken);
 
@@ -54,8 +58,6 @@ public class UpdateCartItemHandler(AppDbContext context)
         return Result<CartResponse>.Success(response);
     }
 
-    private static string? NormalizeSession(string? sessionId) =>
-        string.IsNullOrWhiteSpace(sessionId) ? null : sessionId.Trim();
 
     /// <summary>Ownership comes from the session header alone — a caller-supplied userId is not proof of identity.</summary>
     private static bool BelongsToCaller(Cart cart, string sessionId) =>

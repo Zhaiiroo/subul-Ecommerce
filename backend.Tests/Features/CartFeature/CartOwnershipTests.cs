@@ -115,16 +115,25 @@ public class CartOwnershipTests : IAsyncLifetime
         Assert.NotNull(await verifyContext.CartItems.FindAsync(victimItemId));
     }
 
-    // MergeCart names the target userId in its body, so it can no longer be called anonymously.
+    // M-8: MergeCart took the target userId from the request body, and the only
+    // tokens that exist are admin tokens, so every caller was either refused or
+    // an IDOR. It was removed until real customer accounts exist; the route must
+    // stay gone rather than quietly come back.
     [Fact]
-    public async Task POST_CartMerge_WithoutToken_Returns401()
+    public async Task POST_CartMerge_RouteNoLongerExists()
     {
+        // Authenticated on purpose: the fallback policy answers 401 for any
+        // anonymous request, matched or not, so only a signed-in caller can tell
+        // "removed" (404) apart from "protected".
+        await using var context = _fixture.CreateContext();
+        using var admin = await AuthTestHelper.CreateAuthenticatedClientAsync(_factory, context);
+
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/carts/merge");
         request.Headers.Add("X-Cart-Session", Guid.NewGuid().ToString("N"));
         request.Content = JsonContent.Create(new { userId = 1 });
 
-        var response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var response = await admin.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     // Guest carts themselves stay anonymous — the fix must not break the storefront.

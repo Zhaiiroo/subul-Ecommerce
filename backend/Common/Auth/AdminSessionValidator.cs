@@ -1,7 +1,9 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using backend.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 namespace backend.Common.Auth;
 
@@ -61,6 +63,9 @@ public static class AdminSessionValidator
             return;
         }
 
+        if (!await IsStillSignedInAsync(context, principal))
+            return;
+
         // The role and the must-change flag are refreshed from the row rather than
         // trusted from the token, so a demotion or a reset applies to the request
         // in flight instead of to the next sign-in.
@@ -80,5 +85,48 @@ public static class AdminSessionValidator
             principal.Identity?.AuthenticationType,
             ClaimTypes.Name,
             ClaimTypes.Role));
+    }
+
+    /// <summary>
+    /// Rejects a token whose session was ended by sign-out.
+    ///
+    /// Fails closed: if Redis cannot answer, the request is refused rather than
+    /// served with a token that may have been revoked. Only authenticated admin
+    /// traffic reaches this, so an outage locks the panel for its duration and
+    /// leaves the anonymous storefront untouched — and sign-in is refused during
+    /// the same outage anyway (the login rate limit fails closed too).
+    /// </summary>
+    private static async Task<bool> IsStillSignedInAsync(TokenValidatedContext context, ClaimsPrincipal principal)
+    {
+        var revocations = context.HttpContext.RequestServices.GetService<TokenRevocationStore>();
+        if (revocations is null)
+            return true;
+
+        var tokenId = principal.FindFirstValue(JwtRegisteredClaimNames.Jti);
+        if (string.IsNullOrEmpty(tokenId))
+        {
+            // Issued before tokens carried an id, so it could never be revoked.
+            context.Fail("Token carries no id.");
+            return false;
+        }
+
+        try
+        {
+            if (!await revocations.IsRevokedAsync(tokenId, context.HttpContext.RequestAborted))
+                return true;
+
+            context.Fail("Token was revoked by sign-out.");
+            return false;
+        }
+        catch (Exception exception) when (exception is RedisException or TimeoutException)
+        {
+            context.HttpContext.RequestServices
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger(typeof(AdminSessionValidator))
+                .LogError(exception, "Token revocation status is unavailable; refusing the request");
+
+            context.Fail("Token revocation status is unavailable.");
+            return false;
+        }
     }
 }

@@ -133,10 +133,14 @@ public class AdminUserHandlerTests(DatabaseFixture fixture)
     }
 
     [Fact]
-    public async Task LogoutAdminUser_ReturnsSuccess()
+    public async Task LogoutAdminUser_WithoutRevocationStore_ReturnsSuccess()
     {
+        // No Redis configured: nothing to revoke into, the token simply expires.
+        // Revocation itself is covered against a real Redis in SessionRevocationTests.
         var handler = new LogoutAdminUserHandler();
-        var result = await handler.Handle(new LogoutAdminUserCommand(), CancellationToken.None);
+        var result = await handler.Handle(
+            new LogoutAdminUserCommand(Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddHours(1)),
+            CancellationToken.None);
 
         Assert.True(result.IsSuccess);
         Assert.True(result.Value!.Success);

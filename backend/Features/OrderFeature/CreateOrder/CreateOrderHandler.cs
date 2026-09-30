@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text.Json;
+using backend.Common.Carts;
 using backend.Common.Results;
 using backend.Domain.Entities;
 using backend.Infrastructure.Persistence;
@@ -25,9 +27,6 @@ namespace backend.Features.OrderFeature.CreateOrder;
 /// </summary>
 public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
 {
-    // Mirrors carts.session_id (varchar 255).
-    private const int SessionIdMax = 255;
-
     // Unbounded text columns — these numbers are the only limit that exists.
     // customerNotes matches the storefront's own zod cap so the two agree.
     private const int CustomerNotesMax = 500;
@@ -38,15 +37,10 @@ public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
     private const int CityMax = 100;
     private const int GovernorateMax = 100;
     private const int CountryMax = 100;
-    private const int CouponCodeMax = 100;
     private const int PhoneMax = 20;
 
     public CreateOrderValidator()
     {
-        RuleFor(x => x.SessionId)
-            .MaximumLength(SessionIdMax)
-            .WithMessage("معرّف جلسة السلة غير صالح");
-
         RuleFor(x => x.ShippingFirstName)
             .MaximumLength(NameMax)
             .WithMessage($"الاسم الأول يجب ألا يتجاوز {NameMax} حرفاً");
@@ -85,9 +79,13 @@ public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
             .MaximumLength(CountryMax)
             .WithMessage($"الدولة يجب ألا تتجاوز {CountryMax} حرفاً");
 
+        // M-6: there is no coupon feature — no coupons table and no discount
+        // logic — yet the code used to be accepted and stored with a zero
+        // discount, which reads to a shopper (and to staff) like a promise that
+        // was not kept. Refused outright until coupons actually exist.
         RuleFor(x => x.CouponCode)
-            .MaximumLength(CouponCodeMax)
-            .WithMessage($"رمز الخصم يجب ألا يتجاوز {CouponCodeMax} حرفاً");
+            .Must(string.IsNullOrWhiteSpace)
+            .WithMessage("الكوبونات غير متاحة حالياً");
 
         RuleFor(x => x.CustomerNotes)
             .MaximumLength(CustomerNotesMax)
@@ -102,18 +100,31 @@ public class CreateOrderValidator : AbstractValidator<CreateOrderCommand>
 public class CreateOrderHandler(AppDbContext context)
     : IRequestHandler<CreateOrderCommand, Result<CreateOrderResponse>>
 {
+    // Cash on delivery is the only method with anything behind it: there is no
+    // gateway integration and no bank-transfer reconciliation, so accepting the
+    // others produced orders nobody could collect. The storefront sends "cod"
+    // only; widen this when a real method is implemented.
     private static readonly HashSet<string> ValidPaymentMethods = new(StringComparer.OrdinalIgnoreCase)
     {
-        "cod", "bank_transfer", "online"
+        "cod"
     };
+
+    // No 0/O, 1/I/L: the code is read aloud over the phone and typed by hand.
+    private const string OrderCodeAlphabet = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+    private const int OrderCodeLength = 8;
+
+    private const string PricesChangedMessage =
+        "تغيّرت أسعار بعض المنتجات في سلتك. راجع السلة ثم أكّد الطلب من جديد.";
 
     public async Task<Result<CreateOrderResponse>> Handle(
         CreateOrderCommand command,
         CancellationToken cancellationToken)
     {
-        var sessionId = NormalizeSession(command.SessionId);
-        if (sessionId is null)
+        if (string.IsNullOrWhiteSpace(command.SessionId))
             return Result<CreateOrderResponse>.Failure("Cart session is required");
+
+        if (!CartSessionId.TryNormalize(command.SessionId, out var sessionId))
+            return Result<CreateOrderResponse>.Failure(CartSessionId.InvalidMessage);
 
         var paymentMethod = command.PaymentMethod.Trim().ToLowerInvariant();
         if (!ValidPaymentMethods.Contains(paymentMethod))
@@ -153,11 +164,35 @@ public class CreateOrderHandler(AppDbContext context)
                 return Result<CreateOrderResponse>.Failure($"Insufficient stock for '{item.Product.NameEn}'");
         }
 
-        var subtotal = cart.CartItems.Sum(ci =>
+        // M-10: the cart keeps the price each item had when it was added, and
+        // that is what the shopper has been looking at. An order must never be
+        // placed at a price that no longer exists, in either direction — so a
+        // change since then refreshes the cart and asks the shopper to confirm
+        // the new total instead of silently charging (or losing) the difference.
+        var now = DateTime.Now;
+        var pricesChanged = false;
+        foreach (var item in cart.CartItems)
         {
-            var unitPrice = ci.UnitPrice ?? ResolveUnitPrice(ci.Product, ci.Variant);
-            return unitPrice * ci.Quantity;
-        });
+            var currentPrice = ResolveUnitPrice(item.Product, item.Variant);
+            if (item.UnitPrice == currentPrice)
+                continue;
+
+            // A null price predates price capture; the cart already showed the
+            // current price for it, so there is nothing to re-confirm.
+            if (item.UnitPrice is not null)
+                pricesChanged = true;
+
+            item.UnitPrice = currentPrice;
+            item.UpdatedAt = now;
+        }
+
+        if (pricesChanged)
+        {
+            await context.SaveChangesAsync(cancellationToken);
+            return Result<CreateOrderResponse>.Failure(PricesChangedMessage);
+        }
+
+        var subtotal = cart.CartItems.Sum(ci => ci.UnitPrice!.Value * ci.Quantity);
 
         var (shippingAmount, zoneId, shippingError) = await CalculateShippingAsync(
             subtotal,
@@ -172,7 +207,6 @@ public class CreateOrderHandler(AppDbContext context)
         var taxAmount = 0m;
         var total = subtotal - discountAmount + shippingAmount + taxAmount;
         var currency = cart.CartItems.First().Product.Currency;
-        var now = DateTime.Now;
         var orderNumber = await GenerateOrderNumberAsync(cancellationToken);
 
         var order = new Order
@@ -188,7 +222,6 @@ public class CreateOrderHandler(AppDbContext context)
             TaxAmount = taxAmount,
             Total = total,
             Currency = currency,
-            CouponCode = command.CouponCode?.Trim(),
             ShippingFirstName = shipping.ShippingFirstName,
             ShippingLastName = shipping.ShippingLastName,
             ShippingPhone = shipping.ShippingPhone,
@@ -205,9 +238,18 @@ public class CreateOrderHandler(AppDbContext context)
             UpdatedAt = now
         };
 
+        // H-4: the stock check above is only a fast, friendly failure. It read
+        // stock in one statement and the old code wrote it back in another, so
+        // two checkouts for the last unit both passed and sold it twice. The real
+        // guard is now a conditional decrement — `stock >= quantity` evaluated
+        // by Postgres on the row it updates — inside one transaction with the
+        // order insert. A concurrent checkout blocks on the row lock, re-checks
+        // against the committed stock, and fails cleanly if it ran out.
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+
         foreach (var cartItem in cart.CartItems)
         {
-            var unitPrice = cartItem.UnitPrice ?? ResolveUnitPrice(cartItem.Product, cartItem.Variant);
+            var unitPrice = cartItem.UnitPrice!.Value;
             var lineTotal = unitPrice * cartItem.Quantity;
 
             order.OrderItems.Add(new OrderItem
@@ -226,13 +268,33 @@ public class CreateOrderHandler(AppDbContext context)
                 CreatedAt = now
             });
 
-            if (cartItem.Variant is not null)
-                cartItem.Variant.StockQuantity -= cartItem.Quantity;
-            else
-                cartItem.Product.StockQuantity -= cartItem.Quantity;
+            var quantity = cartItem.Quantity;
+            var reserved = cartItem.VariantId is not null
+                ? await context.ProductVariants
+                    .Where(v => v.Id == cartItem.VariantId && v.StockQuantity >= quantity)
+                    .ExecuteUpdateAsync(
+                        set => set.SetProperty(v => v.StockQuantity, v => v.StockQuantity - quantity),
+                        cancellationToken)
+                : await context.Products
+                    .Where(p => p.Id == cartItem.ProductId && p.StockQuantity >= quantity)
+                    .ExecuteUpdateAsync(
+                        set => set.SetProperty(p => p.StockQuantity, p => p.StockQuantity - quantity),
+                        cancellationToken);
 
-            cartItem.Product.TotalSold += cartItem.Quantity;
-            cartItem.Product.UpdatedAt = now;
+            // Returning disposes the transaction, which rolls back any unit
+            // already reserved for an earlier line of this order.
+            if (reserved == 0)
+                return Result<CreateOrderResponse>.Failure($"Insufficient stock for '{cartItem.Product.NameEn}'");
+
+            // Incremented in SQL as well: a read-modify-write here would lose
+            // counts under the same concurrency the stock guard exists for.
+            await context.Products
+                .Where(p => p.Id == cartItem.ProductId)
+                .ExecuteUpdateAsync(
+                    set => set
+                        .SetProperty(p => p.TotalSold, p => p.TotalSold + quantity)
+                        .SetProperty(p => p.UpdatedAt, now),
+                    cancellationToken);
         }
 
         order.OrderStatusHistories.Add(new OrderStatusHistory
@@ -248,7 +310,20 @@ public class CreateOrderHandler(AppDbContext context)
         context.CartItems.RemoveRange(cart.CartItems);
         cart.UpdatedAt = now;
 
-        await context.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Two submissions of the same cart (a double click, a retried
+            // request): the other one committed first and already removed these
+            // items. This one rolls back, stock included, instead of creating a
+            // second order for goods that were paid for once.
+            return Result<CreateOrderResponse>.Failure("Cart has already been checked out");
+        }
+
+        await transaction.CommitAsync(cancellationToken);
 
         var items = order.OrderItems.Select(oi => new CreateOrderItemResponse(
             oi.Id,
@@ -288,23 +363,30 @@ public class CreateOrderHandler(AppDbContext context)
         return Result<CreateOrderResponse>.Success(response);
     }
 
-    private static string? NormalizeSession(string? sessionId) =>
-        string.IsNullOrWhiteSpace(sessionId) ? null : sessionId.Trim();
-
     private static decimal ResolveUnitPrice(Product product, ProductVariant? variant) =>
         variant?.Price ?? product.Price;
 
+    /// <summary>
+    /// M-3: the order number is half of the guest-tracking credential (with the
+    /// phone), so it must not be guessable. It used to be six decimal digits from
+    /// Random.Shared — 900,000 values a day from a generator whose state can be
+    /// inferred from observed outputs. Eight characters from a 31-symbol alphabet
+    /// drawn with a cryptographic RNG give ~8.5e11 values per day, which together
+    /// with the track endpoint's own rate limit puts enumeration out of reach.
+    /// </summary>
     private async Task<string> GenerateOrderNumberAsync(CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 5; attempt++)
         {
-            var orderNumber = $"ORD-{DateTime.Now:yyyyMMdd}-{Random.Shared.Next(100000, 999999)}";
+            var code = new string(RandomNumberGenerator.GetItems<char>(OrderCodeAlphabet, OrderCodeLength));
+            var orderNumber = $"ORD-{DateTime.Now:yyyyMMdd}-{code}";
             var exists = await context.Orders.AnyAsync(o => o.OrderNumber == orderNumber, cancellationToken);
             if (!exists)
                 return orderNumber;
         }
 
-        return $"ORD-{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid().ToString("N")[..6].ToUpperInvariant()}";
+        // Five collisions in a space this size means something is broken, not unlucky.
+        throw new InvalidOperationException("Could not generate a unique order number.");
     }
 
     private async Task<(decimal Amount, long? ZoneId, string? Error)> CalculateShippingAsync(

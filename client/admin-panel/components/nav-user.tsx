@@ -43,10 +43,20 @@ export function NavUser() {
   const accessToken = user.accessToken
 
   async function handleLogout() {
-    void fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` },
-    }).catch(() => {});
+    // Awaited, not fire-and-forget: this call is what revokes the token on the
+    // server, and signOut() navigates away — a request still in flight at that
+    // moment can be cancelled, leaving the token valid for hours. Bounded so an
+    // unreachable API cannot hold the user on the page; signing out locally
+    // happens either way.
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch {
+      // Revocation failed or timed out; the token still expires on its own.
+    }
     await signOut({ callbackUrl: '/login' });
   }
 

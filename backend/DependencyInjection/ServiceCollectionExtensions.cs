@@ -2,6 +2,7 @@ using backend.Common.Auth;
 using backend.Common.Behaviors;
 using backend.Common.RateLimiting;
 using backend.Common.Storage;
+using backend.Infrastructure.Background;
 using backend.Infrastructure.Persistence;
 using Amazon.Runtime;
 using Amazon.S3;
@@ -44,6 +45,8 @@ public static class ServiceCollectionExtensions
             .Validate(options => options.WindowSeconds > 0, "RedisRateLimit:WindowSeconds must be greater than zero.")
             .Validate(options => options.LoginPermitLimit > 0, "RedisRateLimit:LoginPermitLimit must be greater than zero.")
             .Validate(options => options.LoginWindowSeconds > 0, "RedisRateLimit:LoginWindowSeconds must be greater than zero.")
+            .Validate(options => options.TrackPermitLimit > 0, "RedisRateLimit:TrackPermitLimit must be greater than zero.")
+            .Validate(options => options.TrackWindowSeconds > 0, "RedisRateLimit:TrackWindowSeconds must be greater than zero.")
             // Enabled without a Redis connection used to boot fine and silently
             // enforce nothing: the limiter is only registered below when the
             // connection string is present, and the middleware passes every
@@ -72,6 +75,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IConnectionMultiplexer>(_ =>
                 ConnectionMultiplexer.Connect(redisConnectionString));
             services.AddSingleton<RedisRateLimiter>();
+            services.AddSingleton<TokenRevocationStore>();
         }
 
         if (!string.IsNullOrWhiteSpace(redisCacheConnectionString))
@@ -132,6 +136,9 @@ public static class ServiceCollectionExtensions
         {
             services.AddSingleton<IImageStorageService, LocalImageStorageService>();
         }
+
+        services.Configure<CartCleanupOptions>(configuration.GetSection(CartCleanupOptions.SectionName));
+        services.AddHostedService<ExpiredCartCleanupService>();
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
         services.AddSingleton<JwtTokenService>();
