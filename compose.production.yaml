@@ -18,6 +18,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
       Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
+      AllowedHosts: ${API_ALLOWED_HOSTS:?API_ALLOWED_HOSTS is required}
       ImageStorage__Provider: R2
       ImageStorage__R2__ServiceUrl: ${R2_SERVICE_URL:?R2_SERVICE_URL is required}
       ImageStorage__R2__BucketName: ${R2_BUCKET_NAME:?R2_BUCKET_NAME is required}

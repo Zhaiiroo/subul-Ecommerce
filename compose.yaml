@@ -1,7 +1,24 @@
+# Docker's json-file driver keeps every line a container prints, with no size
+# limit by default. Traefik's access log alone writes one line per request, so
+# over months the disk fills and PostgreSQL stops accepting writes. Every
+# service rotates at 10 MB and keeps five files (50 MB each at most).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   traefik:
     image: traefik:v3.3
     restart: unless-stopped
+    logging: *logging
+    # A fixed address so the API can trust forwarded headers from Traefik alone.
+    # Trusting the whole network instead would let any container spoof
+    # X-Forwarded-For and mint a fresh rate-limit bucket per request.
+    networks:
+      default:
+        ipv4_address: ${TRAEFIK_IPV4:?TRAEFIK_IPV4 is required}
     command:
       - --configFile=/etc/traefik/traefik.yml
     volumes:
@@ -16,6 +33,7 @@ services:
   db:
     image: postgres:17-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -32,11 +50,52 @@ services:
       timeout: 5s
       retries: 10
 
+  # Security state: rate-limit counters (and later, revoked tokens). noeviction
+  # because an evicted key here silently weakens a control — a counter that
+  # vanishes resets a brute-force window. The keys are tiny and all expire, so
+  # 64 MB is far more than they need. No persistence: every key is short-lived.
   redis:
     image: redis:8.10.1-alpine
     restart: unless-stopped
+    logging: *logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server
+        --save ""
+        --appendonly no
+        --requirepass "$${REDIS_PASSWORD}"
+        --maxmemory 64mb
+        --maxmemory-policy noeviction
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Output cache. The opposite policy: under memory pressure the least recently
+  # used entries go, which is exactly what a cache is for.
+  redis-cache:
+    image: redis:8.10.1-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_CACHE_PASSWORD:?REDIS_CACHE_PASSWORD is required}
+    command:
+      - sh
+      - -c
+      - >-
+        exec redis-server
+        --save ""
+        --appendonly no
+        --requirepass "$${REDIS_PASSWORD}"
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -52,6 +111,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: "no"
+    logging: *logging
     command: ["--migrate"]
     depends_on:
       db:
@@ -68,6 +128,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *logging
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -75,14 +136,20 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis-cache:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:-Staging}
       ConnectionStrings__DefaultConnection: >-
         Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
-      ConnectionStrings__Redis: redis:6379,abortConnect=false
+      ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+      ConnectionStrings__RedisCache: redis-cache:6379,password=${REDIS_CACHE_PASSWORD},abortConnect=false
+      # Host-header allow-list. `*` locally; production names its public hosts
+      # plus `api`, the host the Next servers use inside the network.
+      AllowedHosts: ${API_ALLOWED_HOSTS:-*}
       Cors__AllowedOrigins__0: ${ADMIN_ORIGIN:-http://localhost:3100}
       Cors__AllowedOrigins__1: ${STOREFRONT_ORIGIN:-http://localhost:8080}
-      ForwardedHeaders__TrustedNetworks__0: ${TRUSTED_PROXY_NETWORK:-172.16.0.0/12}
+      ForwardedHeaders__TrustedNetworks__0: ${TRAEFIK_IPV4:?TRAEFIK_IPV4 is required}
       Jwt__Secret: ${JWT_SECRET:-}
       Jwt__Issuer: ${JWT_ISSUER:-subul-admin}
       Jwt__Audience: ${JWT_AUDIENCE:-subul-admin-panel}
@@ -101,6 +168,7 @@ services:
         NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
         NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - api
     environment:
@@ -121,6 +189,7 @@ services:
         NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
         INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - api
     environment:
@@ -128,6 +197,14 @@ services:
       NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
       NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
       INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
+
+# Fixed per environment so TRAEFIK_IPV4 is predictable, and distinct between
+# environments so Development, Staging, and Production can share one host.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${SUBUL_NETWORK_SUBNET:?SUBUL_NETWORK_SUBNET is required}
 
 volumes:
   postgres-data:

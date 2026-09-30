@@ -11,8 +11,23 @@ kept explicit on purpose; no wrapper scripts are required.
 | Staging | Full Docker stack | Docker, `subul-staging` | `.runtime/staging/img` |
 | Production | Full Docker stack | Docker on the server | Cloudflare R2 |
 
-Development and Staging must never share a PostgreSQL volume. Redis is an
-ephemeral cache/rate-limit store and intentionally has no persistent volume.
+Development and Staging must never share a PostgreSQL volume.
+
+Redis runs as two password-protected instances with no persistence:
+
+- `redis`: security state such as rate-limit counters. It uses `noeviction`,
+  because an evicted key silently weakens a control.
+- `redis-cache`: the output cache. It uses `allkeys-lru`, because evicting old
+  entries is what a cache should do.
+
+Local development runs only `redis`; the backend falls back to it for the cache.
+Passwords go in the env file as letters and digits only, because they are
+embedded in a connection string where `,` and `=` are separators.
+
+Every container runs as a non-root user, and every container's log rotates at
+10 MB × 5 files. Each environment has its own network subnet
+(`SUBUL_NETWORK_SUBNET`). Traefik holds a fixed address in it (`TRAEFIK_IPV4`),
+which is the only address the API trusts for `X-Forwarded-For`.
 
 ## Files
 
@@ -38,14 +53,15 @@ Copy the example files if the real files do not exist:
 ```powershell
 Copy-Item .env.development.example .env.development
 Copy-Item .env.staging.example .env.staging
+Copy-Item backend/appsettings.Development.example.json backend/appsettings.Development.json
 Copy-Item client/admin-panel/.env.example client/admin-panel/.env.local
 Copy-Item client/storefront/.env.example client/storefront/.env.local
 ```
 
-Use different database names and credentials for Development and Staging. The
-Development values in `backend/appsettings.Development.json` must match
-`.env.development`, because the native backend connects through the published
-PostgreSQL port.
+Use different database names and credentials for Development and Staging.
+`backend/appsettings.Development.json` is ignored by Git. Its PostgreSQL and
+Redis passwords must match `.env.development`, because the native backend
+connects through the published ports.
 
 Create the external database volumes once:
 

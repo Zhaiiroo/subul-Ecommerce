@@ -56,22 +56,36 @@ public static class ServiceCollectionExtensions
                 "Set the connection string, or set RedisRateLimit:Enabled to false to run without rate limiting.")
             .ValidateOnStart();
 
+        // Two Redis roles with opposite eviction needs. ConnectionStrings:Redis
+        // holds security state — rate-limit counters, and anything whose silent
+        // eviction would weaken a control — and runs with noeviction.
+        // ConnectionStrings:RedisCache holds the output cache, which must be free
+        // to evict under memory pressure. Sharing one instance forces a single
+        // policy on both, so production runs two; when RedisCache is unset (local
+        // development) the cache falls back to the security instance.
+        var redisCacheConnectionString = configuration.GetConnectionString("RedisCache");
+        if (string.IsNullOrWhiteSpace(redisCacheConnectionString))
+            redisCacheConnectionString = redisConnectionString;
+
         if (!string.IsNullOrWhiteSpace(redisConnectionString))
         {
             services.AddSingleton<IConnectionMultiplexer>(_ =>
                 ConnectionMultiplexer.Connect(redisConnectionString));
             services.AddSingleton<RedisRateLimiter>();
+        }
 
+        if (!string.IsNullOrWhiteSpace(redisCacheConnectionString))
+        {
             services.AddStackExchangeRedisOutputCache(options =>
             {
-                options.Configuration = redisConnectionString;
+                options.Configuration = redisCacheConnectionString;
                 options.InstanceName = "subul:";
             });
         }
 
         services.AddOutputCache(options =>
         {
-            if (!string.IsNullOrWhiteSpace(redisConnectionString))
+            if (!string.IsNullOrWhiteSpace(redisCacheConnectionString))
             {
                 options.AddBasePolicy(policy => policy
                     .With(context => context.HttpContext.Request.Path.StartsWithSegments("/api/categories"))

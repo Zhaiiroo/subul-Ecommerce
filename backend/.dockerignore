@@ -2,3 +2,8 @@ bin/
 obj/
 .vs/
 *.user
+# Local-only settings carry developer secrets and must never reach an image
+# that is copied to a server.
+appsettings.Development.json
+appsettings.*.local.json
+appsettings.*.example.json

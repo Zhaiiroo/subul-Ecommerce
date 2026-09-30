@@ -82,6 +82,8 @@ ScaffoldingReadMe.txt
 
 # User-specific secrets (keep appsettings.json in repo)
 **/appsettings.*.local.json
+# Carries local secrets; copy backend/appsettings.Development.example.json.
+backend/appsettings.Development.json
 **/secrets.json
 
 # ─────────────────────────────────────────────
