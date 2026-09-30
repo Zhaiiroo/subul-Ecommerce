@@ -16,11 +16,19 @@ services:
       - ${DATABASE_BACKUP_PATH:?DATABASE_BACKUP_PATH is required}:/backups
 
   migrate:
+    # Release images only: the server never builds, and never pulls an
+    # application image from a registry — they come from the release archive.
+    build: !reset null
+    pull_policy: never
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
       Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
 
   api:
+    # Release images only: the server never builds, and never pulls an
+    # application image from a registry — they come from the release archive.
+    build: !reset null
+    pull_policy: never
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
       Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
@@ -40,9 +48,19 @@ services:
       - ${UPLOADS_PATH:?UPLOADS_PATH is required}:/img
 
   admin:
+    # Release images only: the server never builds, and never pulls an
+    # application image from a registry — they come from the release archive.
+    build: !reset null
+    pull_policy: never
     environment:
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
       # Auth.js builds its own URLs from the address the Next server listens on
       # (http://0.0.0.0:3000 in the container), so without this every signOut()
       # sent the user to a dead address. The panel's public origin fixes it.
       AUTH_URL: https://${ADMIN_HOST}
+
+  storefront:
+    # Release images only: the server never builds, and never pulls an
+    # application image from a registry — they come from the release archive.
+    build: !reset null
+    pull_policy: never

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# subul — docker compose for the installed production release, with the flags
+# that must never be forgotten already applied. Installed as /usr/local/bin/subul
+# by release-import.sh; it always runs the release /opt/subul/current points at.
+#
+#   subul up -d            start or update (migrate runs first, then the api)
+#   subul ps               state of every container
+#   subul logs -f api      follow one service
+#   subul logs migrate     what the last schema step did
+#   subul restart admin    restart one service
+#   subul down             stop and remove the containers (data is kept)
+#
+# Every argument is passed to `docker compose` unchanged, except -v/--volumes,
+# which is refused: it would delete the Let's Encrypt certificates, and it is
+# one keystroke away from habits formed on development machines.
+
+set -euo pipefail
+
+RELEASE_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ENV_FILE="${SUBUL_ENV_FILE:-/etc/subul/production.env}"
+
+for arg in "$@"; do
+  if [[ "$arg" == "-v" || "$arg" == "--volumes" ]]; then
+    echo "subul: refusing '$arg' — it removes volumes. Use docker directly if you really mean it." >&2
+    exit 1
+  fi
+done
+
+[[ -r "$ENV_FILE" ]] || { echo "subul: cannot read $ENV_FILE (missing, or run with sudo)." >&2; exit 1; }
+
+# The tag comes from the release, not from the env file, so switching releases
+# (or rolling back) is only a matter of where /opt/subul/current points.
+IMAGE_TAG="$(cat "$RELEASE_DIR/RELEASE_TAG")"
+export IMAGE_TAG
+
+exec docker compose \
+  --project-directory "$RELEASE_DIR" \
+  --env-file "$ENV_FILE" \
+  -f "$RELEASE_DIR/compose.yaml" \
+  -f "$RELEASE_DIR/compose.production.yaml" \
+  -p subul-prod \
+  "$@"

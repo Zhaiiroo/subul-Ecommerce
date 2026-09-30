@@ -8,6 +8,13 @@ x-logging: &logging
     max-size: "10m"
     max-file: "5"
 
+# Every timestamp in the database comes from DateTime.Now (the backend) or
+# now() (Postgres defaults), both of which read the container's clock — UTC
+# unless told otherwise. The store runs on Baghdad time, so without this every
+# order, status change and report in production was three hours behind.
+# Both images ship tzdata; Node carries its own zone data.
+x-timezone: &timezone ${TZ:-Asia/Baghdad}
+
 services:
   traefik:
     image: traefik:v3.6.1
@@ -29,6 +36,7 @@ services:
       STORE_HOST: ${STORE_HOST:?STORE_HOST is required}
       ADMIN_HOST: ${ADMIN_HOST:?ADMIN_HOST is required}
       TRAEFIK_ENTRYPOINT: web
+      TZ: *timezone
     volumes:
       - ./deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./deploy/traefik/dynamic:/etc/traefik/dynamic:ro
@@ -46,6 +54,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TZ: *timezone
+    # Set on the server rather than left to initdb, so it also applies to a
+    # volume that was initialised in UTC.
+    command: ["postgres", "-c", "timezone=${TZ:-Asia/Baghdad}", "-c", "log_timezone=${TZ:-Asia/Baghdad}"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -126,6 +138,7 @@ services:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:-Staging}
+      TZ: *timezone
       ConnectionStrings__DefaultConnection: >-
         Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
       Jwt__Secret: ${JWT_SECRET:-}
@@ -148,6 +161,7 @@ services:
         condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:-Staging}
+      TZ: *timezone
       ConnectionStrings__DefaultConnection: >-
         Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
       ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},abortConnect=false
@@ -190,6 +204,7 @@ services:
       NEXT_PUBLIC_API_URL: /backend/api
       NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:5101/api}
+      TZ: *timezone
       AUTH_SECRET: ${AUTH_SECRET:-}
       AUTH_TRUST_HOST: "true"
 
@@ -216,6 +231,7 @@ services:
       NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
       NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
       INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
+      TZ: *timezone
 
 # One /24 per environment (SUBUL_NETWORK_PREFIX, e.g. 172.30.30), distinct so
 # Development, Staging and Production can share a host. Fixed addresses:

@@ -24,8 +24,10 @@ Local development runs only `redis`; the backend falls back to it for the cache.
 Passwords go in the env file as letters and digits only, because they are
 embedded in a connection string where `,` and `=` are separators.
 
-Every container runs as a non-root user, and every container's log rotates at
-10 MB × 5 files. Each environment has its own network subnet
+Every container runs as a non-root user, every container's log rotates at
+10 MB × 5 files, and every container (Postgres included, through its `timezone`
+setting) runs on `Asia/Baghdad` time. Timestamps come from `DateTime.Now` and
+`now()`, so a UTC container would record every order three hours early. Each environment has its own network subnet
 (`SUBUL_NETWORK_SUBNET`). Traefik holds a fixed address in it (`TRAEFIK_IPV4`),
 which is the only address the API trusts for `X-Forwarded-For`.
 
@@ -292,18 +294,16 @@ R2 custom domain requires a Cloudflare zone):
 The R2 values are validated at startup only when the provider is `R2`; missing
 or invalid values then prevent the API from starting.
 
-Validate before every deployment:
-
-```bash
-docker compose --env-file /etc/subul/production.env -f compose.yaml -f compose.production.yaml -p subul-prod config --quiet
-```
-
-For the current build-on-server phase:
-
-```bash
-docker volume create --label com.subul.type=database --label com.subul.environment=production subul-production-postgres
-docker compose --env-file /etc/subul/production.env -f compose.yaml -f compose.production.yaml -p subul-prod up --build -d --wait
-```
+**Releases.** Production never builds. `deploy/scripts/release-export.sh` builds
+on a workstation behind three gates: a clean tree, no high or critical
+vulnerabilities, and a passing backend suite. It packs the images and the
+compose/Traefik files into one archive with checksums.
+`deploy/scripts/release-import.sh` installs that archive on the server.
+The `subul` wrapper then runs compose with the right env file, files and
+project name. `compose.production.yaml` removes every `build:` and sets
+`pull_policy: never`, so the server only runs images it was given. The full
+procedure (first install, updates, rollback, backups, the move to the domain)
+is in `docs/deploy/vm-install.md`.
 
 `up` runs `migrate` before `api`, so a new production volume gets its schema
 without any manual step; `AdminBootstrapper` then creates the first account.

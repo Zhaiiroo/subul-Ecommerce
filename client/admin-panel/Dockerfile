@@ -29,6 +29,10 @@ COPY --from=build /app/public ./public
 RUN mkdir -p .next/cache && chown node:node .next/cache
 USER node
 EXPOSE 3000
+# /api/auth/providers, not /: every other path redirects an anonymous caller to
+# the login page on the PUBLIC origin (AUTH_URL), which is unreachable from
+# inside the container, so following it always failed. This route answers
+# directly, and only when Auth.js itself is configured correctly.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:3000/api/auth/providers',{redirect:'manual'}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "server.js"]

@@ -163,3 +163,6 @@ backups/
 *~
 *.orig
 *.rej
+
+# Release archives built by deploy/scripts/release-export.sh
+deploy-out/
