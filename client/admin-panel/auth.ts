@@ -23,10 +23,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
+        // This call leaves from the admin container, not the visitor's browser.
+        // Without the visitor's address the API would count every sign-in
+        // attempt against one shared login bucket, so a stranger guessing
+        // passwords would lock the whole staff out. The API trusts this
+        // container's fixed address and reads only the entry Traefik appended.
+        const forwardedFor = request.headers.get('x-forwarded-for');
         const res = await fetch(`${BACKEND_API}/auth/login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(forwardedFor ? { 'X-Forwarded-For': forwardedFor } : {}),
+          },
           body: JSON.stringify({
             email: credentials?.email,
             password: credentials?.password,

@@ -1,69 +1,47 @@
-# Traefik dynamic configuration — routing and response headers.
+# Traefik routers. A Go template, rendered by Traefik's file provider from the
+# container's environment (compose.yaml passes these in):
 #
-# Routing is by path and entrypoint, not by hostname, so it works today with no
-# DNS and no domain. Every rule here keeps the URL shapes the applications
-# already use, so nothing in the code has to know a proxy exists.
+#   STORE_HOST          storefront host   e.g. 203-0-113-10.sslip.io, later the domain
+#   ADMIN_HOST          admin host        e.g. admin.203-0-113-10.sslip.io
+#   TRAEFIK_ENTRYPOINT  web (local, plain HTTP) or websecure (production, TLS)
 #
-# When the domain is ready, add `Host(...)` to these rules, move them to the
-# websecure entrypoint, and attach the `le` certResolver. Nothing else changes.
+# Moving to the final domain is therefore a change of two values in the env
+# file; nothing here is edited. A request for any other host — including the
+# bare server IP — matches no router and gets a 404, so the services are not
+# reachable by address scanning.
 
 http:
   routers:
-    # The API shares the storefront's origin on :80. A useful side effect: the
-    # storefront stops being cross-origin, so it needs no CORS at all. The admin
-    # panel is still a different origin and still relies on Cors:AllowedOrigins.
-    api:
-      rule: "PathPrefix(`/api`) || PathPrefix(`/img`) || PathPrefix(`/scalar`) || PathPrefix(`/openapi`)"
-      entryPoints: [web]
+    # The API shares the storefront's origin: the browser calls /api on the
+    # same host it loaded the page from, so the storefront needs no CORS.
+    store-backend:
+      rule: 'Host(`{{ env "STORE_HOST" }}`) && (PathPrefix(`/api`) || PathPrefix(`/img`))'
+      entryPoints: ['{{ env "TRAEFIK_ENTRYPOINT" }}']
       service: api
       middlewares: [security-headers]
       # Must outrank the storefront catch-all below.
       priority: 100
 
-    storefront:
-      rule: "PathPrefix(`/`)"
-      entryPoints: [web]
+    store:
+      rule: 'Host(`{{ env "STORE_HOST" }}`)'
+      entryPoints: ['{{ env "TRAEFIK_ENTRYPOINT" }}']
       service: storefront
       middlewares: [security-headers]
       priority: 1
 
+    # Same origin for the admin panel too, under /backend (see backend-prefix in
+    # shared.yml for why not /api). No cross-origin call is left anywhere, so
+    # the API runs with CORS switched off outside local development.
+    admin-backend:
+      rule: 'Host(`{{ env "ADMIN_HOST" }}`) && PathPrefix(`/backend`)'
+      entryPoints: ['{{ env "TRAEFIK_ENTRYPOINT" }}']
+      service: api
+      middlewares: [backend-prefix, security-headers]
+      priority: 100
+
     admin:
-      rule: "PathPrefix(`/`)"
-      entryPoints: [adminweb]
+      rule: 'Host(`{{ env "ADMIN_HOST" }}`)'
+      entryPoints: ['{{ env "TRAEFIK_ENTRYPOINT" }}']
       service: admin
       middlewares: [security-headers]
-
-  services:
-    api:
-      loadBalancer:
-        servers:
-          - url: "http://api:5101"
-    storefront:
-      loadBalancer:
-        servers:
-          - url: "http://storefront:3001"
-    admin:
-      loadBalancer:
-        servers:
-          - url: "http://admin:3000"
-
-  middlewares:
-    # Transport-level headers live here so all three services get them from one
-    # place. Content-Security-Policy is NOT here: it needs per-request nonces
-    # from Next.js, so it stays in each app's next.config.ts.
-    security-headers:
-      headers:
-        # Verified: Traefik emits no HSTS header at all over a plain HTTP
-        # connection, so this is inert today and starts applying by itself once
-        # the websecure entrypoint is in use. Left without `preload` on purpose —
-        # preloading is effectively irreversible and should not be committed to
-        # before the final domain is settled.
-        stsSeconds: 31536000
-        stsIncludeSubdomains: true
-        contentTypeNosniff: true
-        frameDeny: true
-        referrerPolicy: "strict-origin-when-cross-origin"
-        customResponseHeaders:
-          # Drop the fingerprinting headers the frameworks add by default.
-          X-Powered-By: ""
-          Server: ""
+      priority: 1

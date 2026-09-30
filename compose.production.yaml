@@ -1,13 +1,19 @@
 services:
+  # Only 80 (redirect + Let's Encrypt challenge) and 443 are published. The
+  # database, both Redis instances and every application container have no
+  # host port at all.
   traefik:
     ports:
       - "80:80"
       - "443:443"
-      - "3000:3000"
+    environment:
+      TRAEFIK_ENTRYPOINT: websecure
+    volumes:
+      - ./deploy/traefik/traefik.production.yml:/etc/traefik/traefik.yml:ro
 
   db:
     volumes:
-      - ${DATABASE_BACKUP_PATH:-/srv/subul/backups/database}:/backups
+      - ${DATABASE_BACKUP_PATH:?DATABASE_BACKUP_PATH is required}:/backups
 
   migrate:
     environment:
@@ -18,33 +24,21 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${APP_ENVIRONMENT:?APP_ENVIRONMENT is required}
       Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
-      AllowedHosts: ${API_ALLOWED_HOSTS:?API_ALLOWED_HOSTS is required}
-      ImageStorage__Provider: R2
-      ImageStorage__R2__ServiceUrl: ${R2_SERVICE_URL:?R2_SERVICE_URL is required}
-      ImageStorage__R2__BucketName: ${R2_BUCKET_NAME:?R2_BUCKET_NAME is required}
-      ImageStorage__R2__AccessKeyId: ${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}
-      ImageStorage__R2__SecretAccessKey: ${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}
-      ImageStorage__R2__PublicBaseUrl: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
+      # Local until the final domain exists (R2 custom domains need a Cloudflare
+      # zone), then R2. The R2 values are validated at startup only when the
+      # provider is R2, so they may stay empty while it is Local.
+      ImageStorage__Provider: ${IMAGE_STORAGE_PROVIDER:?IMAGE_STORAGE_PROVIDER is required}
+      ImageStorage__R2__ServiceUrl: ${R2_SERVICE_URL:-}
+      ImageStorage__R2__BucketName: ${R2_BUCKET_NAME:-}
+      ImageStorage__R2__AccessKeyId: ${R2_ACCESS_KEY_ID:-}
+      ImageStorage__R2__SecretAccessKey: ${R2_SECRET_ACCESS_KEY:-}
+      ImageStorage__R2__PublicBaseUrl: ${PUBLIC_IMAGE_URL:-}
+    # Uploaded images live on the host, outside Docker, next to the database
+    # backups. The directory must be owned by UID 1654 (the api user):
+    #   sudo install -d -o 1654 -g 1654 /srv/subul/img
+    volumes:
+      - ${UPLOADS_PATH:?UPLOADS_PATH is required}:/img
 
   admin:
-    build:
-      args:
-        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
-        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
     environment:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
-      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
-
-  storefront:
-    build:
-      args:
-        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
-        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
-        NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
-        INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
-    environment:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?PUBLIC_API_URL is required}
-      NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
-      NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:?PUBLIC_IMAGE_URL is required}
-

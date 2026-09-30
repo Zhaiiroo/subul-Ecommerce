@@ -10,17 +10,25 @@ x-logging: &logging
 
 services:
   traefik:
-    image: traefik:v3.3
+    image: traefik:v3.6.1
     restart: unless-stopped
     logging: *logging
-    # A fixed address so the API can trust forwarded headers from Traefik alone.
-    # Trusting the whole network instead would let any container spoof
-    # X-Forwarded-For and mint a fresh rate-limit bucket per request.
+    # Fixed addresses for the three components that may speak for a visitor.
+    # The API trusts X-Forwarded-For from exactly these: Traefik for browser
+    # calls, the storefront and admin servers for the calls they make while
+    # rendering on a visitor's behalf. Trusting the whole network instead would
+    # let any container spoof the header and mint a fresh rate-limit bucket per
+    # request.
     networks:
       default:
-        ipv4_address: ${TRAEFIK_IPV4:?TRAEFIK_IPV4 is required}
+        ipv4_address: ${SUBUL_NETWORK_PREFIX:?SUBUL_NETWORK_PREFIX is required}.10
     command:
       - --configFile=/etc/traefik/traefik.yml
+    # Read by deploy/traefik/dynamic/routes.yml.
+    environment:
+      STORE_HOST: ${STORE_HOST:?STORE_HOST is required}
+      ADMIN_HOST: ${ADMIN_HOST:?ADMIN_HOST is required}
+      TRAEFIK_ENTRYPOINT: web
     volumes:
       - ./deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./deploy/traefik/dynamic:/etc/traefik/dynamic:ro
@@ -144,12 +152,14 @@ services:
         Host=db;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD};Pooling=true;
       ConnectionStrings__Redis: redis:6379,password=${REDIS_PASSWORD},abortConnect=false
       ConnectionStrings__RedisCache: redis-cache:6379,password=${REDIS_CACHE_PASSWORD},abortConnect=false
-      # Host-header allow-list. `*` locally; production names its public hosts
-      # plus `api`, the host the Next servers use inside the network.
-      AllowedHosts: ${API_ALLOWED_HOSTS:-*}
-      Cors__AllowedOrigins__0: ${ADMIN_ORIGIN:-http://localhost:3100}
-      Cors__AllowedOrigins__1: ${STOREFRONT_ORIGIN:-http://localhost:8080}
-      ForwardedHeaders__TrustedNetworks__0: ${TRAEFIK_IPV4:?TRAEFIK_IPV4 is required}
+      # Host-header allow-list: the two public hosts plus `api`, the name the
+      # Next servers use inside the network. Anything else is refused with 400.
+      # No CORS: both frontends reach the API on their own origin through
+      # Traefik, and appsettings.json enables no origins outside Development.
+      AllowedHosts: ${STORE_HOST};${ADMIN_HOST};api
+      ForwardedHeaders__TrustedNetworks__0: ${SUBUL_NETWORK_PREFIX}.10
+      ForwardedHeaders__TrustedNetworks__1: ${SUBUL_NETWORK_PREFIX}.11
+      ForwardedHeaders__TrustedNetworks__2: ${SUBUL_NETWORK_PREFIX}.12
       Jwt__Secret: ${JWT_SECRET:-}
       Jwt__Issuer: ${JWT_ISSUER:-subul-admin}
       Jwt__Audience: ${JWT_AUDIENCE:-subul-admin-panel}
@@ -165,14 +175,19 @@ services:
       context: ./client/admin-panel
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+        # Relative on purpose: the browser calls the API on the admin host
+        # itself, so no host name is baked into the bundle.
+        NEXT_PUBLIC_API_URL: /backend/api
         NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
     restart: unless-stopped
     logging: *logging
+    networks:
+      default:
+        ipv4_address: ${SUBUL_NETWORK_PREFIX}.12
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
+      NEXT_PUBLIC_API_URL: /backend/api
       NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
       INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:5101/api}
       AUTH_SECRET: ${AUTH_SECRET:-}
@@ -184,27 +199,35 @@ services:
       context: ./client/storefront
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
-        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
+        # Relative, like the admin panel: the API shares the storefront host.
+        NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
         NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
         INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
     restart: unless-stopped
     logging: *logging
+    networks:
+      default:
+        ipv4_address: ${SUBUL_NETWORK_PREFIX}.11
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080/api}
-      NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-http://localhost:8080}
+      NEXT_PUBLIC_API_URL: /api
+      NEXT_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL is required}
       NEXT_PUBLIC_IMAGE_URL: ${PUBLIC_IMAGE_URL:-}
       INTERNAL_API_ORIGIN: ${INTERNAL_API_ORIGIN:-http://api:5101}
 
-# Fixed per environment so TRAEFIK_IPV4 is predictable, and distinct between
-# environments so Development, Staging, and Production can share one host.
+# One /24 per environment (SUBUL_NETWORK_PREFIX, e.g. 172.30.30), distinct so
+# Development, Staging and Production can share a host. Fixed addresses:
+# .10 traefik, .11 storefront, .12 admin; everything else is assigned from ip_range.
 networks:
   default:
     ipam:
       config:
-        - subnet: ${SUBUL_NETWORK_SUBNET:?SUBUL_NETWORK_SUBNET is required}
+        - subnet: ${SUBUL_NETWORK_PREFIX}.0/24
+          # Dynamic addresses come only from .128-.255, so no other container
+          # can take a fixed address before its owner starts.
+          ip_range: ${SUBUL_NETWORK_PREFIX}.128/25
 
 volumes:
   postgres-data:

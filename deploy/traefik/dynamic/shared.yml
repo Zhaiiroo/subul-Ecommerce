@@ -1,0 +1,45 @@
+# Traefik dynamic configuration shared by every environment: backend services
+# and middlewares. The routers are per environment, in deploy/traefik/routes/,
+# and each compose override mounts its own as /etc/traefik/dynamic/routes.yml.
+
+http:
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://api:5101"
+    storefront:
+      loadBalancer:
+        servers:
+          - url: "http://storefront:3001"
+    admin:
+      loadBalancer:
+        servers:
+          - url: "http://admin:3000"
+
+  middlewares:
+    # The admin panel owns /api/auth/* (Auth.js), so on the admin host the API
+    # is reached under /backend instead, and this strips the prefix before the
+    # request reaches it: /backend/api/products -> /api/products.
+    backend-prefix:
+      stripPrefix:
+        prefixes: ["/backend"]
+
+    # Transport-level headers live here so all three services get them from one
+    # place. Content-Security-Policy is NOT here: it names each app's own
+    # sources, so it stays in each app's next.config.ts.
+    security-headers:
+      headers:
+        # Traefik emits no HSTS header over plain HTTP, so this is inert locally
+        # and applies by itself on the production HTTPS entrypoint. Left without
+        # `preload` on purpose — preloading is effectively irreversible and
+        # should not be committed to before the final domain is settled.
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customResponseHeaders:
+          # Drop the fingerprinting headers the frameworks add by default.
+          X-Powered-By: ""
+          Server: ""

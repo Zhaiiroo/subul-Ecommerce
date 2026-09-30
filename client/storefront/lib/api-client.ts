@@ -31,4 +31,36 @@ const apiClient = axios.create({
   paramsSerializer: { indexes: null },
 });
 
+/**
+ * While a page renders on the server, every API call leaves from this
+ * container, so the API would see one caller for the whole site and hold every
+ * visitor to a single shared rate-limit bucket. Forwarding the visitor's
+ * X-Forwarded-For (set by Traefik) lets the API, which trusts this container's
+ * fixed address, attribute each call to the visitor it is made for.
+ *
+ * The header is passed on unchanged: the API reads only the last entry, the one
+ * Traefik appended, so anything a client put in front of it is ignored.
+ */
+if (typeof window === 'undefined') {
+  apiClient.interceptors.request.use(async (config) => {
+    const forwardedFor = await readVisitorForwardedFor();
+    if (forwardedFor) config.headers.set('X-Forwarded-For', forwardedFor);
+    return config;
+  });
+}
+
+async function readVisitorForwardedFor(): Promise<string | null> {
+  try {
+    const { headers } = await import('next/headers');
+    return (await headers()).get('x-forwarded-for');
+  } catch (error) {
+    // Rethrows Next's own control-flow errors so rendering behaves as if this
+    // were not here; anything else means there is no request to read — a call
+    // outside a render, such as at build time — and the call goes unattributed.
+    const { unstable_rethrow } = await import('next/navigation');
+    unstable_rethrow(error);
+    return null;
+  }
+}
+
 export default apiClient;

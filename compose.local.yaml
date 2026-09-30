@@ -1,9 +1,10 @@
 services:
+  # One loopback port for both hosts: http://localhost:8080 is the storefront,
+  # http://admin.localhost:8080 the admin panel (browsers resolve *.localhost to
+  # loopback by themselves, so no hosts-file entry is needed).
   traefik:
     ports:
       - "127.0.0.1:${STOREFRONT_HOST_PORT:-8080}:80"
-      - "127.0.0.1:${HTTPS_HOST_PORT:-8443}:443"
-      - "127.0.0.1:${ADMIN_HOST_PORT:-3100}:3000"
 
   db:
     ports:
@@ -28,4 +29,3 @@ services:
 
   storefront:
     pull_policy: build
-

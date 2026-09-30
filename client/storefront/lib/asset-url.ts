@@ -1,6 +1,11 @@
+import { getSiteUrl } from "@/lib/site-url"
+
 export function getApiOrigin(): string {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5101/api"
-  return apiUrl.replace(/\/api\/?$/, "")
+  const origin = apiUrl.replace(/\/api\/?$/, "")
+  // A relative API URL (`/api`, as in Docker) means the API shares the
+  // storefront's own origin, so an absolute URL has to be built from that.
+  return /^https?:\/\//.test(origin) ? origin : getSiteUrl()
 }
 
 /**

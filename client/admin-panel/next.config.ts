@@ -56,17 +56,21 @@ if (publicImageUrl) {
  * what an injected <script src> would need.
  */
 function securityHeaders() {
+  // A relative API URL (Docker: `/api`, `/backend/api`) is same-origin and
+  // already covered by 'self'; only an absolute one (`next dev` against
+  // localhost:5101) needs naming, and a path is not a valid CSP source.
+  const cspApiSource = /^https?:\/\//.test(apiOrigin) ? " " + apiOrigin : ""
   const csp = [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    "img-src 'self' data: blob: " + apiOrigin + (publicImageUrl ? " " + publicImageUrl : ""),
+    "img-src 'self' data: blob:" + cspApiSource + (publicImageUrl ? " " + publicImageUrl : ""),
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'unsafe-inline'",
-    "connect-src 'self' " + apiOrigin,
+    "connect-src 'self'" + cspApiSource,
   ].join("; ")
 
   return [

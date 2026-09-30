@@ -96,6 +96,8 @@ The admin panel is RTL Arabic: use logical properties (`ms-`/`me-`/`start`/`end`
 
 Storefront carts are guest-based: a `cart_session_id` in `localStorage` (`lib/cart-session.ts`) keys the anonymous cart, merged on login via `api/carts/merge`. Its `lib/api-client.ts` sends no auth header at all.
 
+Behind Traefik both frontends call the API same-origin, with relative URLs: the storefront at `/api`, the admin panel at `/backend/api`, because the panel owns `/api/auth/*` for Auth.js. There is no CORS outside Development. Server-side calls go straight to `api:5101`, so they must forward the visitor's `X-Forwarded-For`, or the API rate-limits every visitor as one caller. The storefront's `api-client` interceptor and admin `auth.ts` `authorize` do this. A new server-side call path that bypasses them must do the same. The API trusts the header only from the fixed traefik/storefront/admin addresses (`SUBUL_NETWORK_PREFIX` `.10`/`.11`/`.12`). Routing is in `deploy/traefik/dynamic/routes.yml` and `docs/environments.md`.
+
 **Next.js 16 differs substantially from model training data** — read `node_modules/next/dist/docs/` before changing routing or data fetching in either client.
 
 ### Tests

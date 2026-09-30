@@ -128,10 +128,11 @@ Build and start the complete stack:
 docker compose --env-file .env.staging -f compose.yaml -f compose.local.yaml -p subul-staging up --build -d --wait
 ```
 
-Staging URLs with the example ports:
+Staging URLs with the example ports (one port, routed by host name; browsers
+resolve `*.localhost` to loopback without a hosts-file entry):
 
-- Storefront and API: `http://localhost:8080`
-- Admin: `http://localhost:3100`
+- Storefront: `http://localhost:8080` (API under `/api` on the same host)
+- Admin: `http://admin.localhost:8080` (API under `/backend/api` on the same host)
 - PostgreSQL: `127.0.0.1:5434`
 - Redis: `127.0.0.1:6380`
 
@@ -212,36 +213,80 @@ Safe daily commands are `stop`, `start`, `up -d`, and `down` without `-v`.
 An external volume is an accident guard, not a backup. Production dumps must be
 copied off the server; use a private backup bucket, never the public media bucket.
 
-## Production and Cloudflare R2
+## Routing
 
-Create `/etc/subul/production.env` from `.env.production.example`, restrict its
-filesystem permissions, and replace every placeholder. Do not send R2 secrets
-through chat or commit them to Git.
+Traefik routes by host name from `deploy/traefik/dynamic/routes.yml`, a template
+filled from `STORE_HOST`, `ADMIN_HOST` and `TRAEFIK_ENTRYPOINT`:
 
-The checked-in Traefik routes currently serve plain HTTP. Port 443 is reserved,
-but no TLS router or certificate resolver is active until the final storefront
-and admin domains are known. Do not expose this stack publicly as-is: terminate
-TLS in the server/platform ingress, or finish the Traefik DNS/ACME configuration
-before directing production traffic to it.
+| Host | Path | Goes to |
+|---|---|---|
+| `STORE_HOST` | `/api`, `/img` | api |
+| `STORE_HOST` | everything else | storefront |
+| `ADMIN_HOST` | `/backend/*` (prefix stripped) | api |
+| `ADMIN_HOST` | everything else | admin |
 
-Required R2 values:
+Any other host, including the bare server IP, matches nothing and gets a 404.
+The admin panel reaches the API under `/backend` because it serves Auth.js on
+`/api/auth/*` itself.
 
-- S3 service URL: `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` (or the
-  jurisdiction-specific endpoint).
-- Bucket name.
-- Bucket-scoped Object Read & Write access key ID and secret access key.
-- Public custom domain such as `https://media.example.com`.
+Both frontends call the API on their own origin, with relative
+`NEXT_PUBLIC_API_URL` values (`/api`, `/backend/api`) fixed in `compose.yaml`.
+Nothing is cross-origin, so CORS is off outside local development. The API
+answers only to `STORE_HOST`, `ADMIN_HOST` and `api`, the in-network name.
 
-The backend uploads and deletes objects through the S3-compatible API. It stores
-the public absolute URL in the database. The bucket custom domain serves image
-reads; `r2.dev` is not intended for production traffic.
+While rendering on the server, the storefront and admin servers call the API
+from inside the network. They forward the visitor's `X-Forwarded-For`. The API
+trusts that header only from the three fixed addresses (`.10` traefik,
+`.11` storefront, `.12` admin in `SUBUL_NETWORK_PREFIX`), and reads only the
+entry Traefik appended. Without this, every visitor would share one
+rate-limit bucket, the storefront's.
 
-Existing `/img/...` records are intentionally not migrated automatically. Before
-the first production cut-over, upload the existing files to R2, take and verify a
-database backup, preview the affected rows, and then update those URLs to the R2
-custom domain in one reviewed transaction. This must be performed only after the
-bucket and final public domain exist; guessing either value now would risk broken
-image references.
+## Production
+
+Create `/etc/subul/production.env` from `.env.production.example`, restrict it
+to `chmod 600`, and replace every placeholder. Never send secrets through chat
+or commit them to Git.
+
+**HTTPS.** Production mounts `deploy/traefik/traefik.production.yml`. Port 80
+only redirects to 443 and answers Let's Encrypt's HTTP-01 challenge. Traefik
+requests and renews a certificate for each host by itself and keeps it in the
+`letsencrypt` volume. The only requirement is that both host names resolve to
+the server and port 80 is reachable from the internet.
+
+**No domain yet: sslip.io.** For server IP `a.b.c.d`, use
+`STORE_HOST=a-b-c-d.sslip.io` and `ADMIN_HOST=admin.a-b-c-d.sslip.io`. These
+names resolve to the IP with no registration and get real certificates.
+
+**Moving to the domain.** Point the DNS records at the server (Cloudflare,
+DNS-only, grey cloud) and change `STORE_HOST`, `ADMIN_HOST` and
+`PUBLIC_SITE_URL`. Rebuild the storefront, because `PUBLIC_SITE_URL` is compiled
+in for canonical and Open Graph URLs. Traefik issues the new certificates on the
+first request. Nothing in the code or the routing file changes.
+
+**Images.** Until the domain exists, `IMAGE_STORAGE_PROVIDER=Local` writes
+uploads to `UPLOADS_PATH` on the host, outside Docker. Create that directory
+once, owned by the api user:
+
+```bash
+sudo install -d -o 1654 -g 1654 /srv/subul/img
+```
+
+Back it up together with the database.
+
+**Moving images to Cloudflare R2** (after the domain is on Cloudflare, because an
+R2 custom domain requires a Cloudflare zone):
+
+1. Create the bucket with a custom domain such as `media.<domain>`, and a
+   bucket-scoped Object Read & Write key.
+2. Upload `UPLOADS_PATH` as-is. Local `/img/products/1/x.png` and R2 key
+   `products/1/x.png` use the same layout.
+3. Take and verify a database backup. Then, in one reviewed transaction, rewrite
+   the stored `/img/` prefix to `https://media.<domain>/` in the image columns.
+4. Set `IMAGE_STORAGE_PROVIDER=R2` with the five R2 values, and rebuild the
+   frontends (`PUBLIC_IMAGE_URL` is compiled into their image configuration).
+
+The R2 values are validated at startup only when the provider is `R2`; missing
+or invalid values then prevent the API from starting.
 
 Validate before every deployment:
 
@@ -258,9 +303,8 @@ docker compose --env-file /etc/subul/production.env -f compose.yaml -f compose.p
 
 `up` runs `migrate` before `api`, so a new production volume gets its schema
 without any manual step; `AdminBootstrapper` then creates the first account.
-PostgreSQL and Redis are not published by `compose.production.yaml`. Production
-R2 configuration is validated at application startup; missing or invalid URLs,
-bucket, or credentials prevent the API from starting.
+Only ports 80 and 443 are published. PostgreSQL, both Redis instances and the
+application containers have no host port.
 
 ## Verification
 

@@ -1,0 +1,43 @@
+# Traefik static configuration — production, HTTPS only.
+# See traefik.yml for why the file provider is used instead of the Docker socket.
+
+entryPoints:
+  # Port 80 exists only to redirect to HTTPS and to answer Let's Encrypt's
+  # HTTP-01 challenge, which Traefik serves ahead of the redirect by itself.
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: le
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+log:
+  level: INFO
+
+accessLog: {}
+
+# One certificate per host name in routes.production.yml, issued and renewed
+# automatically. HTTP-01 needs only that the names resolve to this server and
+# port 80 is reachable, which holds for both the temporary <ip>.sslip.io names
+# and the final domain on Cloudflare DNS-only. The certificates survive
+# restarts in the `letsencrypt` volume. No e-mail: Let's Encrypt no longer
+# sends expiry notices, and renewal is automatic.
+certificatesResolvers:
+  le:
+    acme:
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
